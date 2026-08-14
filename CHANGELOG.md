@@ -2,15 +2,22 @@
 
 Все notable-изменения этого форка. Формат loosely [Keep a Changelog](https://keepachangelog.com/).
 Тег релиза = `v{app}-{tagSuffix}` (например `v12.9.2-3845`); CI кладёт секцию тега в GitHub Release notes.
+Теги `*-pre` публикуются как GitHub **pre-release** (не Latest).
 
-## [Unreleased]
+## [v12.9.2-3849-pre] — 2026-08-14
+
+Pre-release: crash stability — профиль, редактор/камера, чат, пересылка, файлы. Sideload smoke, не Latest.
 
 ### Fixed
-- **Profile:** intermittent crash when opening a user profile or Settings — adjacent media panes (Files/Music/Voice) no longer hit `preconditionFailure` during async row-height measurement; pane tabs with missing context are skipped instead of force-unwrapping; Settings list rows and media grid cells use synchronous node configuration with safe fallbacks.
-- **Forward:** пересылка из личного чата с первого раза — панель пересылки и подсветка в целевом чате больше не теряются из‑за гонки при открытии нового `ChatController`.
-- **Photo editor / camera:** `loadTexture` scale overflow, unguarded `capturePhoto`, main-thread CI/GPU readback, draft decode traps, cutout Core ML hop, collage JPEG off main, capture downscale to 2560px; Send no longer sticks when `resultImage` is nil; collage/export/subject paths fail soft instead of `fatalError`.
-- **Files:** Attach → File → Files no longer silently fails when security-scoped access returns false on imported sandbox URLs.
-- **Chat:** reaction picker no longer crashes if the chat/story controller is dismissed while emoji content loads; media picker `signals` nil no longer force-unwraps; forum thread navigation guards nav stack bounds; gift-cover CALayer presentation copies no longer rebuild sublayers; Metal editor/camera pipelines fail soft instead of `fatalError`; legacy photo-editor KVO observer is removed before replacing `AVPlayer`.
+- **Profile:** вылет при открытии своего/чужого профиля — async row-height / Settings rows / media grid; gift-cover CALayer presentation copies.
+- **Photo editor / camera:** `loadTexture` scale overflow, unguarded `capturePhoto`, CI/GPU на main, draft `fatalError`, cutout Core ML, Send при `resultImage == nil`, collage/export soft-fail, Metal pipeline skip.
+- **Chat:** реакции больше не `preconditionFailure` при уходе из чата; `signals!` picker; forum nav stack; drop `as! [UIImage]`.
+- **Forward:** пересылка из личного чата с первого раза (гонка `forwardMessageIds`).
+- **Files:** Attach → File → документ с устройства больше не пропадает молча.
+
+### Also includes
+- v12.9.2-3848-pre file-send / iCloud scope
+- v12.9.2-3847-pre photo editor stability
 
 ## [v12.9.2-3846] — 2026-08-12
 

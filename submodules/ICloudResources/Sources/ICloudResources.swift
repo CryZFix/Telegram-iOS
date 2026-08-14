@@ -121,73 +121,77 @@ private func audioArtworkData(from asset: AVURLAsset) -> Data? {
     return nil
 }
 
+private func withSecurityScopedAccess<T>(_ url: URL, _ body: () -> T?) -> T? {
+    let scopedAccess = url.startAccessingSecurityScopedResource()
+    defer {
+        if scopedAccess {
+            url.stopAccessingSecurityScopedResource()
+        }
+    }
+    return body()
+}
+
 private func descriptionWithUrl(_ url: URL) -> ICloudFileDescription? {
     if #available(iOSApplicationExtension 9.0, iOS 9.0, *) {
-        guard url.startAccessingSecurityScopedResource() else {
-            return nil
-        }
-        
-        guard let urlData = try? url.bookmarkData(options: URL.BookmarkCreationOptions.suitableForBookmarkFile, includingResourceValuesForKeys: nil, relativeTo: nil) else {
-            return nil
-        }
-        
-        guard let values = try? url.resourceValues(forKeys: Set([.fileSizeKey])), let fileSize = values.fileSize else {
-            return nil
-        }
-        
-        guard let fileName = (url.lastPathComponent as NSString).removingPercentEncoding else {
-            return nil
-        }
-        
-        var audioMetadata: ICloudFileDescription.AudioMetadata?
-        let fileExtension = url.pathExtension.lowercased()
-        var hasAudioArtwork = false
-        let audioAsset: AVURLAsset?
-        if audioFileExtensions.contains(fileExtension) {
-            let asset = AVURLAsset(url: url)
-            audioAsset = asset
-            hasAudioArtwork = audioArtworkData(from: asset) != nil
-        } else {
-            audioAsset = nil
-        }
-        if ["mp3", "m4a"].contains(fileExtension), let asset = audioAsset {
-            let title = AVMetadataItem.metadataItems(from: asset.commonMetadata, withKey: AVMetadataKey.commonKeyTitle, keySpace: AVMetadataKeySpace.common).first?.stringValue
-            let performer = AVMetadataItem.metadataItems(from: asset.commonMetadata, withKey: AVMetadataKey.commonKeyArtist, keySpace: AVMetadataKeySpace.common).first?.stringValue
-            let duration = CMTimeGetSeconds(asset.duration)
-            if duration > 0 {
-                audioMetadata = ICloudFileDescription.AudioMetadata(title: title, performer: performer, duration: Int(duration), hasAudioArtwork: hasAudioArtwork)
+        return withSecurityScopedAccess(url) {
+            guard let urlData = try? url.bookmarkData(options: URL.BookmarkCreationOptions.suitableForBookmarkFile, includingResourceValuesForKeys: nil, relativeTo: nil) else {
+                return nil
             }
-        } else if fileExtension == "flac", let asset = audioAsset {
-            var title: String?
-            var performer: String?
-            let vorbisComment = AVMetadataFormat(rawValue: "org.xiph.vorbis-comment")
-            if asset.availableMetadataFormats.contains(vorbisComment) {
-                let items = asset.metadata(forFormat: vorbisComment)
-                for item in items {
-                    if item.commonKey == AVMetadataKey.commonKeyTitle {
-                        title = item.stringValue
-                    }
-                    if item.commonKey == AVMetadataKey.commonKeyArtist {
-                        performer = item.stringValue
+            
+            guard let values = try? url.resourceValues(forKeys: Set([.fileSizeKey])), let fileSize = values.fileSize else {
+                return nil
+            }
+            
+            guard let fileName = (url.lastPathComponent as NSString).removingPercentEncoding else {
+                return nil
+            }
+            
+            var audioMetadata: ICloudFileDescription.AudioMetadata?
+            let fileExtension = url.pathExtension.lowercased()
+            var hasAudioArtwork = false
+            let audioAsset: AVURLAsset?
+            if audioFileExtensions.contains(fileExtension) {
+                let asset = AVURLAsset(url: url)
+                audioAsset = asset
+                hasAudioArtwork = audioArtworkData(from: asset) != nil
+            } else {
+                audioAsset = nil
+            }
+            if ["mp3", "m4a"].contains(fileExtension), let asset = audioAsset {
+                let title = AVMetadataItem.metadataItems(from: asset.commonMetadata, withKey: AVMetadataKey.commonKeyTitle, keySpace: AVMetadataKeySpace.common).first?.stringValue
+                let performer = AVMetadataItem.metadataItems(from: asset.commonMetadata, withKey: AVMetadataKey.commonKeyArtist, keySpace: AVMetadataKeySpace.common).first?.stringValue
+                let duration = CMTimeGetSeconds(asset.duration)
+                if duration > 0 {
+                    audioMetadata = ICloudFileDescription.AudioMetadata(title: title, performer: performer, duration: Int(duration), hasAudioArtwork: hasAudioArtwork)
+                }
+            } else if fileExtension == "flac", let asset = audioAsset {
+                var title: String?
+                var performer: String?
+                let vorbisComment = AVMetadataFormat(rawValue: "org.xiph.vorbis-comment")
+                if asset.availableMetadataFormats.contains(vorbisComment) {
+                    let items = asset.metadata(forFormat: vorbisComment)
+                    for item in items {
+                        if item.commonKey == AVMetadataKey.commonKeyTitle {
+                            title = item.stringValue
+                        }
+                        if item.commonKey == AVMetadataKey.commonKeyArtist {
+                            performer = item.stringValue
+                        }
                     }
                 }
+                let duration = CMTimeGetSeconds(asset.duration)
+                if duration > 0 {
+                    audioMetadata = ICloudFileDescription.AudioMetadata(title: title, performer: performer, duration: Int(duration), hasAudioArtwork: hasAudioArtwork)
+                }
             }
-            let duration = CMTimeGetSeconds(asset.duration)
-            if duration > 0 {
-                audioMetadata = ICloudFileDescription.AudioMetadata(title: title, performer: performer, duration: Int(duration), hasAudioArtwork: hasAudioArtwork)
-            }
+            
+            return ICloudFileDescription(
+                urlData: urlData.base64EncodedString(),
+                fileName: fileName,
+                fileSize: fileSize,
+                audioMetadata: audioMetadata
+            )
         }
-        
-        let result = ICloudFileDescription(
-            urlData: urlData.base64EncodedString(),
-            fileName: fileName,
-            fileSize: fileSize,
-            audioMetadata: audioMetadata
-        )
-        
-        url.stopAccessingSecurityScopedResource()
-        
-        return result
     } else {
         return nil
     }
@@ -253,13 +257,17 @@ public func iCloudFileDescription(_ url: URL) -> Signal<ICloudFileDescription?, 
 
 private final class ICloudFileResourceCopyItem: EngineRawMediaResourceDataFetchCopyLocalItem {
     private let url: URL
+    private let holdsScopedAccess: Bool
     
-    init(url: URL) {
+    init(url: URL, holdsScopedAccess: Bool) {
         self.url = url
+        self.holdsScopedAccess = holdsScopedAccess
     }
     
     deinit {
-        self.url.stopAccessingSecurityScopedResource()
+        if self.holdsScopedAccess {
+            self.url.stopAccessingSecurityScopedResource()
+        }
     }
     
     func copyTo(url: URL) -> Bool {
@@ -298,7 +306,8 @@ public func fetchICloudFileResource(resource: ICloudFileResource) -> Signal<Engi
             }
         }
         
-        guard url.startAccessingSecurityScopedResource() else {
+        let scopedAccess = url.startAccessingSecurityScopedResource()
+        guard scopedAccess || FileManager.default.isReadableFile(atPath: url.path) else {
             subscriber.putCompletion()
             return EmptyDisposable
         }
@@ -323,7 +332,7 @@ public func fetchICloudFileResource(resource: ICloudFileResource) -> Signal<Engi
                     subscriber.putNext(.moveTempFile(file: tempFile))
                 }
             } else {
-                subscriber.putNext(.copyLocalItem(ICloudFileResourceCopyItem(url: url)))
+                subscriber.putNext(.copyLocalItem(ICloudFileResourceCopyItem(url: url, holdsScopedAccess: scopedAccess)))
             }
             subscriber.putCompletion()
         }

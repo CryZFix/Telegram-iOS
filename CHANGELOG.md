@@ -2,6 +2,24 @@
 
 Все notable-изменения этого форка. Формат loosely [Keep a Changelog](https://keepachangelog.com/).
 Тег релиза = `v{app}-{tagSuffix}` (например `v12.9.2-3845`); CI кладёт секцию тега в GitHub Release notes.
+Теги `*-pre` публикуются как GitHub **pre-release** (не Latest).
+
+## [v12.9.2-3847-pre] — 2026-08-14
+
+Pre-release: стабильность редактора фото / камеры. Для sideload-проверки на устройстве, не Latest.
+
+### Fixed
+- **Photo editor:** краш при открытии картинки с `UIImage.scale != 1` (скриншоты и часть фото из галереи) — буфер `loadTexture` считался в points, текстура Metal в пикселях.
+- **Camera:** `takePhoto` больше не зовёт `capturePhoto` если photo output не в running-сессии (иначе `NSInvalidArgumentException`).
+- **Send / cover / sticker:** композиция 1080p ушла с main thread (watchdog на «просто закрылось»).
+- **Drafts:** битый story draft больше не `fatalError`, а decode error (текст, геостикер, неизвестный tool key).
+- **Cutout:** Core ML на iOS 16 не на caller thread; lookup маски с bounds-check.
+
+### Changed
+- Загрузка full-res текстуры и гистограмма прозрачности — с очереди `UniversalTextureSource` (первый кадр превью может мигнуть пустым).
+- Send still-photo читает кэш кадра после GPU, а не делает readback на main. Видеоэкспорт кэш не трогает.
+- JPEG коллажа пишется в фоне; playback подключается, когда файлы уже на диске.
+- Снимок с камеры перед `createCGImage` режется до 2560 по длинной стороне (не полный 12 Мп буфер).
 
 ## [v12.9.2-3846] — 2026-08-12
 

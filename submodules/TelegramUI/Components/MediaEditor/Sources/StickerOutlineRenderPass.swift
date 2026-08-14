@@ -133,5 +133,8 @@ private func roundedCornersMaskImage(outlineWidth: CGFloat) -> CIImage {
         context.setFillColor(UIColor.white.cgColor)
         context.fillPath()
     }?.cgImage
-    return CIImage(cgImage: image!)
+    if let image {
+        return CIImage(cgImage: image)
+    }
+    return CIImage(color: CIColor.white).cropped(to: CGRect(origin: .zero, size: CGSize(width: 1080.0, height: 1920.0)))
 }

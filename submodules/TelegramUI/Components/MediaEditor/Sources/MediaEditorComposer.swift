@@ -54,7 +54,10 @@ private func roundedCornersMaskImage(size: CGSize) -> CIImage {
         context.setFillColor(UIColor.white.cgColor)
         context.fillPath()
     }?.cgImage
-    return CIImage(cgImage: image!)
+    if let image {
+        return CIImage(cgImage: image)
+    }
+    return CIImage(color: CIColor.white).cropped(to: CGRect(origin: .zero, size: size))
 }
 
 private func rectangleMaskImage(size: CGSize) -> CIImage {
@@ -62,7 +65,10 @@ private func rectangleMaskImage(size: CGSize) -> CIImage {
         context.setFillColor(UIColor.white.cgColor)
         context.fill(CGRect(origin: .zero, size: size))
     }?.cgImage
-    return CIImage(cgImage: image!)
+    if let image {
+        return CIImage(cgImage: image)
+    }
+    return CIImage(color: CIColor.white).cropped(to: CGRect(origin: .zero, size: size))
 }
 
 public final class MediaEditorComposer {

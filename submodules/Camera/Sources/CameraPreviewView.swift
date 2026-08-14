@@ -300,7 +300,7 @@ public class CameraPreviewView: MTKView {
         do {
             self.renderPipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
         } catch {
-            fatalError("\(error)")
+            return nil
         }
         
         self.setupTextureCache()
@@ -312,7 +312,7 @@ public class CameraPreviewView: MTKView {
     
     private func setupTextureCache() {
         var newTextureCache: CVMetalTextureCache?
-        if CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device!, nil, &newTextureCache) == kCVReturnSuccess {
+        if CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &newTextureCache) == kCVReturnSuccess {
             self.textureCache = newTextureCache
         } else {
             assertionFailure("Unable to allocate texture cache")
@@ -360,7 +360,7 @@ public class CameraPreviewView: MTKView {
             -scaleX, scaleY, 0.0, 1.0,
             scaleX, scaleY, 0.0, 1.0
         ]
-        self.vertexCoordBuffer = device!.makeBuffer(bytes: vertexData, length: vertexData.count * MemoryLayout<Float>.size, options: [])
+        self.vertexCoordBuffer = self.device?.makeBuffer(bytes: vertexData, length: vertexData.count * MemoryLayout<Float>.size, options: [])
         
         var texCoordBufferData: [Float]
         switch self.textureRotation {

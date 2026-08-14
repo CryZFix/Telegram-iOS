@@ -551,6 +551,10 @@ static UIView<TGPhotoToolbarViewProtocol> *TGPhotoEditorCreatePhotoToolbarView(T
                 progress = 1.0f;
             }
         } else if ([next isKindOfClass:[AVAsset class]]) {
+            if (strongSelf->_registeredKeypathObserver) {
+                [strongSelf->_player removeObserver:strongSelf forKeyPath:@"rate" context:nil];
+                strongSelf->_registeredKeypathObserver = false;
+            }
             strongSelf->_playerItem = [AVPlayerItem playerItemWithAsset:(AVAsset *)next];
             strongSelf->_player = [AVPlayer playerWithPlayerItem:strongSelf->_playerItem];
             strongSelf->_player.actionAtItemEnd = AVPlayerActionAtItemEndNone;

@@ -2299,7 +2299,7 @@ final class PeerInfoHeaderNode: ASDisplayNode {
             case .addContact:
                 buttonText = "Add"
             default:
-                fatalError()
+                buttonText = ""
             }
             
             buttonNode.update(size: buttonFrame.size, text: buttonText, presentationData: presentationData, transition: buttonTransition)

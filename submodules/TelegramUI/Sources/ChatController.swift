@@ -10049,7 +10049,10 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
             guard let strongSelf = self, !imageItems.isEmpty else {
                 return
             }
-            let images = imageItems as! [UIImage]
+            let images = imageItems.compactMap { $0 as? UIImage }
+            guard !images.isEmpty else {
+                return
+            }
             
             strongSelf.chatDisplayNode.updateDropInteraction(isActive: false)
             if images.count == 1, let image = images.first {

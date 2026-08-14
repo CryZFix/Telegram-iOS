@@ -3814,7 +3814,7 @@ public final class MediaEditorScreenImpl: ViewController, MediaEditorScreen, UID
                     let message = Message(stableId: 0, stableVersion: 0, id: MessageId(peerId: self.context.account.peerId, namespace: Namespaces.Message.Cloud, id: -1), globallyUniqueId: nil, groupingKey: nil, groupInfo: nil, threadId: nil, timestamp: 0, flags: [], tags: [], globalTags: [], localTags: [], customTags: [], forwardInfo: nil, author: nil, text: "", attributes: [], media: media, peers: SimpleDictionary(), associatedMessages: SimpleDictionary(), associatedMessageIds: [], associatedMedia: [:], associatedThreadInfo: nil, associatedStories: [:])
                     messages = .single([message])
                 } else {
-                    fatalError()
+                    messages = .single([])
                 }
                 
                 let isNightTheme = mediaEditor.values.nightTheme
@@ -3863,17 +3863,16 @@ public final class MediaEditorScreenImpl: ViewController, MediaEditorScreen, UID
                         let renderer = DrawingMessageRenderer(context: self.context, messages: messages.map(EngineMessage.init), parentView: self.view, isGift: isGift, wallpaperDayColor: wallpaperColors.0, wallpaperNightColor: wallpaperColors.1)
                         renderer.render(completion: { result in
                             if isDraft, let existingEntityView = self.entitiesView.getView(where: { entityView in
-                                if let stickerEntityView = entityView as? DrawingStickerEntityView {
-                                    if case .message = (stickerEntityView.entity as! DrawingStickerEntity).content {
+                                if let stickerEntityView = entityView as? DrawingStickerEntityView, let stickerEntity = stickerEntityView.entity as? DrawingStickerEntity {
+                                    if case .message = stickerEntity.content {
                                         return true
-                                    } else if case .gift = (stickerEntityView.entity as! DrawingStickerEntity).content {
+                                    } else if case .gift = stickerEntity.content {
                                         return true
                                     }
                                 }
                                 return false
-                            }) as? DrawingStickerEntityView {
+                            }) as? DrawingStickerEntityView, let messageEntity = existingEntityView.entity as? DrawingStickerEntity {
                                 existingEntityView.isNightTheme = isNightTheme
-                                let messageEntity = existingEntityView.entity as! DrawingStickerEntity
                                 messageEntity.renderImage = result.dayImage
                                 messageEntity.secondaryRenderImage = result.nightImage
                                 messageEntity.overlayRenderImage = result.overlayImage
@@ -3889,7 +3888,7 @@ public final class MediaEditorScreenImpl: ViewController, MediaEditorScreen, UID
                                     content = .gift(gift, result.size)
                                     position = CGPoint(x: storyDimensions.width / 2.0, y: storyDimensions.height / 2.0)
                                 default:
-                                    fatalError()
+                                    return
                                 }
                                 
                                 let messageEntity = DrawingStickerEntity(content: content)
@@ -8386,7 +8385,7 @@ public final class MediaEditorScreenImpl: ViewController, MediaEditorScreen, UID
             case let .empty(dimensions):
                 let image = generateImage(dimensions.cgSize, opaque: false, scale: 1.0, rotatedContext: { size, context in
                     context.clear(CGRect(origin: .zero, size: size))
-                })!
+                }) ?? UIImage()
                 exportSubject = .single(.image(image: image))
             case let .video(path, _, _, _, _, _, _, _, _, _):
                 let asset = AVURLAsset(url: NSURL(fileURLWithPath: path) as URL)
@@ -8469,12 +8468,12 @@ public final class MediaEditorScreenImpl: ViewController, MediaEditorScreen, UID
                     if let image = UIImage(contentsOfFile: draft.fullPath(engine: context.engine)) {
                         exportSubject = .single(.image(image: image))
                     } else {
-                        fatalError()
+                        exportSubject = .complete()
                     }
                 }
             case let .message(messages):
                 let isNightTheme = mediaEditor.values.nightTheme
-                exportSubject = getChatWallpaperImage(context: self.context, peerId: messages.first!.peerId)
+                exportSubject = getChatWallpaperImage(context: self.context, peerId: messages.first?.peerId ?? self.context.account.peerId)
                 |> mapToSignal { _, image, nightImage -> Signal<MediaEditorVideoExport.Subject, NoError> in
                     if isNightTheme {
                         let effectiveImage = nightImage ?? image
@@ -8497,7 +8496,7 @@ public final class MediaEditorScreenImpl: ViewController, MediaEditorScreen, UID
             case let .sticker(file, _):
                 exportSubject = .single(.sticker(file: file))
             case .multiple:
-                fatalError()
+                exportSubject = .complete()
             }
             
             let _ = (exportSubject
@@ -8642,7 +8641,7 @@ public final class MediaEditorScreenImpl: ViewController, MediaEditorScreen, UID
             guard let self else {
                 return
             }
-            let images = imageItems as! [UIImage]
+            let images = imageItems.compactMap { $0 as? UIImage }
             if images.count == 1, let image = images.first, max(image.size.width, image.size.height) > 1.0 {
                 self.node.interaction?.insertEntity(DrawingStickerEntity(content: .image(image, .sticker)), scale: 2.5)
             }

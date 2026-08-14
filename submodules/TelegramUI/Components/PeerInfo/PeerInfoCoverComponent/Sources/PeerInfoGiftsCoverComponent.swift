@@ -488,68 +488,20 @@ private class GiftIconLayer: SimpleLayer {
     let animationLayer: InlineStickerItemLayer
     
     override init(layer: Any) {
-        guard let layer = layer as? GiftIconLayer else {
-            fatalError()
-        }
-                
-        let context = layer.context
-        let gift = layer.gift
-        let size = layer.size
-        let glowing = layer.glowing
-        
-        var file: TelegramMediaFile?
-        var color: UIColor = .white
-        switch gift.gift {
-        case let .generic(gift):
-            file = gift.file
-        case let .unique(gift):
-            for attribute in gift.attributes {
-                if case let .model(_, fileValue, _, _) = attribute {
-                    file = fileValue
-                } else if case let .backdrop(_, _, innerColor, _, _, _, _) = attribute {
-                    color = UIColor(rgb: UInt32(bitPattern: innerColor))
-                }
-            }
-        }
-        
-        let emoji = ChatTextInputTextCustomEmojiAttribute(
-            interactivelySelectedFromPackId: nil,
-            fileId: file?.fileId.id ?? 0,
-            file: file
-        )
-        self.animationLayer = InlineStickerItemLayer(
-            context: .account(context),
-            userLocation: .other,
-            attemptSynchronousLoad: false,
-            emoji: emoji,
-            file: file,
-            cache: context.animationCache,
-            renderer: context.animationRenderer,
-            unique: true,
-            placeholderColor: UIColor.white.withAlphaComponent(0.2),
-            pointSize: CGSize(width: size.width * 2.0, height: size.height * 2.0),
-            loopCount: 1
-        )
-        
-        self.shadowLayer.contents = shadowImage?.cgImage
-        self.shadowLayer.layerTintColor = color.cgColor
-        self.shadowLayer.opacity = glowing ? 1.0 : 0.0
-        
-        self.context = context
-        self.gift = gift
-        self.size = size
-        self.glowing = glowing
-        
-        super.init()
-        
-        let side = floor(size.width * 1.25)
-        let starsFrame = CGSize(width: side, height: side).centered(in: CGRect(origin: .zero, size: size))
-        self.starsLayer.frame = starsFrame
-        self.starsLayer.update(color: glowing ? .white : color, size: starsFrame.size)
-        
-        self.addSublayer(self.shadowLayer)
-        self.addSublayer(self.starsLayer)
-        self.addSublayer(self.animationLayer)
+        // Core Animation presentation copies pass the model layer of this class.
+        // Copy stored properties and call super.init(layer:) — do not rebuild sublayers
+        // (the previous super.init() + addSublayer path crashed during profile-open animations).
+        let source = (layer as? GiftIconLayer)!
+        self.context = source.context
+        self.gift = source.gift
+        self.size = source.size
+        self.glowing = source.glowing
+        self.animationLayer = source.animationLayer
+        super.init(layer: layer)
+    }
+    
+    override func action(forKey event: String) -> CAAction? {
+        return NSNull()
     }
     
     init(

@@ -209,11 +209,9 @@ private final class PeerInfoScreenMemberItemNode: PeerInfoScreenItemNode {
         
         let itemHeight: ItemListPeerItemHeight
         let itemText: ItemListPeerItemText
-        var synchronousLoads = false
         if case .account = item.member {
             itemHeight = .generic
             itemText = .none
-            synchronousLoads = true
         } else {
             itemHeight = .peerList
             itemText = .presence

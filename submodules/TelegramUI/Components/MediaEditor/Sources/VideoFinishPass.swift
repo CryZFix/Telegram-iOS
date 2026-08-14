@@ -784,7 +784,10 @@ final class VideoFinishPass: RenderPass {
         }
         
         let renderPassDescriptor = MTLRenderPassDescriptor()
-        renderPassDescriptor.colorAttachments[0].texture = self.cachedTexture!
+        guard let cachedTexture = self.cachedTexture else {
+            return input.texture
+        }
+        renderPassDescriptor.colorAttachments[0].texture = cachedTexture
         if self.gradientColors.topColor.w > 0.0 {
             renderPassDescriptor.colorAttachments[0].loadAction = .dontCare
         } else {
@@ -810,7 +813,11 @@ final class VideoFinishPass: RenderPass {
             )
         }
         
-        renderCommandEncoder.setRenderPipelineState(self.mainPipelineState!)
+        guard let mainPipelineState = self.mainPipelineState else {
+            renderCommandEncoder.endEncoding()
+            return input.texture
+        }
+        renderCommandEncoder.setRenderPipelineState(mainPipelineState)
         
         if let rect = input.rect {
             self.encodeVideo(
@@ -892,7 +899,7 @@ final class VideoFinishPass: RenderPass {
         
         renderCommandEncoder.endEncoding()
         
-        return self.cachedTexture!
+        return self.cachedTexture ?? input.texture
     }
     
     struct GradientColors {
@@ -905,7 +912,10 @@ final class VideoFinishPass: RenderPass {
         containerSize: CGSize,
         device: MTLDevice
     ) {
-        encoder.setRenderPipelineState(self.gradientPipelineState!)
+        guard let gradientPipelineState = self.gradientPipelineState else {
+            return
+        }
+        encoder.setRenderPipelineState(gradientPipelineState)
         
         let vertices = verticesDataForRotation(.rotate0Degrees)
         let buffer = device.makeBuffer(

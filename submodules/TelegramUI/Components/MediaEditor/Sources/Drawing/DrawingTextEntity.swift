@@ -151,11 +151,11 @@ public final class DrawingTextEntity: DrawingEntity, Codable {
             let container = try decoder.container(keyedBy: CodingKeys.self)
             self.timestamp = try container.decode(Double.self, forKey: .timestamp)
             self.duration = try container.decode(Double.self, forKey: .duration)
-            if let renderImageData = try? container.decodeIfPresent(Data.self, forKey: .image) {
-                self.image = UIImage(data: renderImageData)!
-            } else {
-                fatalError()
+            guard let renderImageData = try container.decodeIfPresent(Data.self, forKey: .image),
+                  let image = UIImage(data: renderImageData) else {
+                throw DecodingError.dataCorruptedError(forKey: .image, in: container, debugDescription: "Missing or invalid animation frame image")
             }
+            self.image = image
         }
         
         public func encode(to encoder: Encoder) throws {

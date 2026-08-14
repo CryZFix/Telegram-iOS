@@ -1860,7 +1860,9 @@ extension CodableToolValue: Codable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let type = try container.decode(ToolType.self, forKey: .type)
-        let key = EditorToolKey(rawValue: try container.decode(Int32.self, forKey: .key))!
+        guard let key = EditorToolKey(rawValue: try container.decode(Int32.self, forKey: .key)) else {
+            throw DecodingError.dataCorruptedError(forKey: .key, in: container, debugDescription: "Unknown editor tool key")
+        }
         switch type {
         case .float:
             self = .float(key, try container.decode(Float.self, forKey: .value))

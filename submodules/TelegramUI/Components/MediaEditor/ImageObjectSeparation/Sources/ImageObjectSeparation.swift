@@ -345,18 +345,20 @@ public func cutoutImage(
             try? handler.perform([request])
         }
     } else {
-        U2netp.load(contentsOf: URL(fileURLWithPath: modelPath()), completionHandler: { result in
-            switch result {
-            case let .success(model):
-                let modelImageSize = CGSize(width: 320, height: 320)
-                if let squareImage = scaleImageToPixelSize(image: image, size: modelImageSize), let pixelBuffer = buffer(from: squareImage), let result = try? model.prediction(in_0: pixelBuffer), let maskImage = UIImage(pixelBuffer: result.out_p1), let scaledMaskImage = scaleImageToPixelSize(image: maskImage, size: image.size), let ciImage = CIImage(image: scaledMaskImage) {
-                    process(instance: 0, mask: ciImage)
+        queue.async {
+            U2netp.load(contentsOf: URL(fileURLWithPath: modelPath()), completionHandler: { result in
+                switch result {
+                case let .success(model):
+                    let modelImageSize = CGSize(width: 320, height: 320)
+                    if let squareImage = scaleImageToPixelSize(image: image, size: modelImageSize), let pixelBuffer = buffer(from: squareImage), let result = try? model.prediction(in_0: pixelBuffer), let maskImage = UIImage(pixelBuffer: result.out_p1), let scaledMaskImage = scaleImageToPixelSize(image: maskImage, size: image.size), let ciImage = CIImage(image: scaledMaskImage) {
+                        process(instance: 0, mask: ciImage)
+                    }
+                case .failure:
+                    break
                 }
-            case .failure:
-                break
-            }
-            completion(results)
-        })
+                completion(results)
+            })
+        }
     }
 }
 
@@ -367,15 +369,27 @@ private func instances(atPoint maybePoint: CGPoint?, inObservation observation: 
     }
     
     let instanceMap = observation.instanceMask
-    let coords = VNImagePointForNormalizedPoint(point, CVPixelBufferGetWidth(instanceMap) - 1, CVPixelBufferGetHeight(instanceMap) - 1)
+    let width = CVPixelBufferGetWidth(instanceMap)
+    let height = CVPixelBufferGetHeight(instanceMap)
+    guard width > 1, height > 1 else {
+        return observation.allInstances
+    }
+    let coords = VNImagePointForNormalizedPoint(point, width - 1, height - 1)
+    let x = Int(coords.x)
+    let y = Int(coords.y)
+    guard x >= 0, y >= 0, x < width, y < height else {
+        return observation.allInstances
+    }
     
     CVPixelBufferLockBaseAddress(instanceMap, .readOnly)
+    defer {
+        CVPixelBufferUnlockBaseAddress(instanceMap, .readOnly)
+    }
     guard let pixels = CVPixelBufferGetBaseAddress(instanceMap) else {
-        fatalError()
+        return observation.allInstances
     }
     let bytesPerRow = CVPixelBufferGetBytesPerRow(instanceMap)
-    let instanceLabel = pixels.load(fromByteOffset: Int(coords.y) * bytesPerRow + Int(coords.x), as: UInt8.self)
-    CVPixelBufferUnlockBaseAddress(instanceMap, .readOnly)
+    let instanceLabel = pixels.load(fromByteOffset: y * bytesPerRow + x, as: UInt8.self)
     
     return instanceLabel == 0 ? observation.allInstances : [Int(instanceLabel)]
 }

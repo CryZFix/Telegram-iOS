@@ -96,6 +96,21 @@ final class MediaEditorRenderer {
     var displayEnabled = true
     var skipEditingPasses = false
     var needsDisplay = false
+    var cachesFinalImage = false {
+        didSet {
+            if !self.cachesFinalImage {
+                self.cacheLock.lock()
+                self.cachedFinalImage = nil
+                self.cachedGeneration = 0
+                self.cacheLock.unlock()
+            }
+        }
+    }
+    
+    private let cacheLock = NSLock()
+    private var renderGeneration: UInt64 = 0
+    private var cachedGeneration: UInt64 = 0
+    private var cachedFinalImage: UIImage?
     
     var onNextRender: (() -> Void)?
     var onNextAdditionalRender: (() -> Void)?
@@ -258,11 +273,17 @@ final class MediaEditorRenderer {
             }
         }
         self.resultTexture = texture
+        self.cacheLock.lock()
+        self.renderGeneration += 1
+        let generation = self.renderGeneration
+        self.cachedFinalImage = nil
+        self.cacheLock.unlock()
         
         if self.renderTarget == nil {
             commandBuffer.addCompletedHandler { [weak self] _ in
                 if let self {
                     self.didRenderFrame()
+                    self.refreshCachedFinalImage(generation: generation)
                 }
             }
         }
@@ -277,6 +298,7 @@ final class MediaEditorRenderer {
             }
         } else {
             commandBuffer.waitUntilCompleted()
+            self.refreshCachedFinalImage(generation: generation)
         }
     }
     
@@ -291,9 +313,13 @@ final class MediaEditorRenderer {
             self.didRenderFrame()
             return
         }
+        self.cacheLock.lock()
+        let generation = self.renderGeneration
+        self.cacheLock.unlock()
         commandBuffer.addCompletedHandler { [weak self] _ in
             if let self {
                 self.didRenderFrame()
+                self.refreshCachedFinalImage(generation: generation)
                 
                 if let onNextRender = self.onNextRender {
                     self.onNextRender = nil
@@ -358,10 +384,45 @@ final class MediaEditorRenderer {
     }
     
     func finalRenderedImage(mirror: Bool = false) -> UIImage? {
+        if !mirror {
+            self.cacheLock.lock()
+            let cached = self.cachedFinalImage
+            let cachedGeneration = self.cachedGeneration
+            let generation = self.renderGeneration
+            self.cacheLock.unlock()
+            if let cached, cachedGeneration == generation {
+                return cached
+            }
+        }
         if let finalTexture = self.resultTexture, let device = self.effectiveDevice {
-            return getTextureImage(device: device, texture: finalTexture, mirror: mirror)
+            let image = getTextureImage(device: device, texture: finalTexture, mirror: mirror)
+            if !mirror, let image {
+                self.cacheLock.lock()
+                self.cachedFinalImage = image
+                self.cachedGeneration = self.renderGeneration
+                self.cacheLock.unlock()
+            }
+            return image
         } else {
             return nil
+        }
+    }
+    
+    private func refreshCachedFinalImage(generation: UInt64) {
+        guard self.cachesFinalImage, let texture = self.resultTexture, let device = self.effectiveDevice else {
+            return
+        }
+        Queue.concurrentDefaultQueue().async { [weak self] in
+            guard let self else {
+                return
+            }
+            let image = getTextureImage(device: device, texture: texture, mirror: false)
+            self.cacheLock.lock()
+            if self.renderGeneration == generation {
+                self.cachedFinalImage = image
+                self.cachedGeneration = generation
+            }
+            self.cacheLock.unlock()
         }
     }
 }

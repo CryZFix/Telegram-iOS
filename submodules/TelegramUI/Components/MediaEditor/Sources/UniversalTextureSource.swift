@@ -11,10 +11,10 @@ final class UniversalTextureSource: TextureSource {
         case video(AVPlayerItem, CGRect?, CGFloat, CGPoint)
         case entity(MediaEditorComposerEntity)
         
-        fileprivate func createContext(renderTarget: RenderTarget, queue: DispatchQueue, additional: Bool) -> InputContext {
+        fileprivate func createContext(renderTarget: RenderTarget, queue: DispatchQueue, additional: Bool, onReady: (() -> Void)? = nil) -> InputContext {
             switch self {
             case .image:
-                return ImageInputContext(input: self, renderTarget: renderTarget, queue: queue)
+                return ImageInputContext(input: self, renderTarget: renderTarget, queue: queue, onReady: onReady)
             case .video:
                 return VideoInputContext(input: self, renderTarget: renderTarget, queue: queue, additional: additional)
             case .entity:
@@ -58,7 +58,10 @@ final class UniversalTextureSource: TextureSource {
         guard let renderTarget = self.renderTarget else {
             return
         }
-        self.mainInputContext = input.createContext(renderTarget: renderTarget, queue: self.queue, additional: false)
+        self.mainInputContext?.invalidate()
+        self.mainInputContext = input.createContext(renderTarget: renderTarget, queue: self.queue, additional: false, onReady: { [weak self] in
+            self?.update(forced: true)
+        })
         self.update(forced: true)
     }
     
@@ -66,7 +69,10 @@ final class UniversalTextureSource: TextureSource {
         guard let renderTarget = self.renderTarget else {
             return
         }
-        self.additionalInputContexts = inputs.map { $0.createContext(renderTarget: renderTarget, queue: self.queue, additional: true) }
+        self.additionalInputContexts.forEach { $0.invalidate() }
+        self.additionalInputContexts = inputs.map { $0.createContext(renderTarget: renderTarget, queue: self.queue, additional: true, onReady: { [weak self] in
+            self?.update(forced: true)
+        }) }
         self.update(forced: true)
     }
     
@@ -215,8 +221,9 @@ private class ImageInputContext: InputContext {
     fileprivate var rect: CGRect?
     fileprivate var scale: CGFloat
     fileprivate var offset: CGPoint
+    private var invalidated = false
     
-    init(input: Input, renderTarget: RenderTarget, queue: DispatchQueue) {
+    init(input: Input, renderTarget: RenderTarget, queue: DispatchQueue, onReady: (() -> Void)?) {
         guard case let .image(image, rect, scale, offset) = input else {
             fatalError()
         }
@@ -224,10 +231,21 @@ private class ImageInputContext: InputContext {
         self.rect = rect
         self.scale = scale
         self.offset = offset
-        if let device = renderTarget.mtlDevice {
-            self.texture = loadTexture(image: image, device: device)
+        guard let device = renderTarget.mtlDevice else {
+            return
         }
-        self.hasTransparency = imageHasTransparency(image)
+        queue.async { [weak self] in
+            let texture = loadTexture(image: image, device: device)
+            let hasTransparency = imageHasTransparency(image)
+            Queue.mainQueue().async {
+                guard let self, !self.invalidated else {
+                    return
+                }
+                self.texture = texture
+                self.hasTransparency = hasTransparency
+                onReady?()
+            }
+        }
     }
     
     func output(time: Double) -> Output? {
@@ -235,6 +253,7 @@ private class ImageInputContext: InputContext {
     }
     
     func invalidate() {
+        self.invalidated = true
         self.texture = nil
     }
     

@@ -577,11 +577,14 @@ private final class ItemView: UIView, SparseItemGridView {
             })
         } else {
             var itemNode: ListViewItemNode?
-            messageItem.nodeConfiguredForParams(async: { f in f() }, params: ListViewItemLayoutParams(width: size.width, leftInset: insets.left, rightInset: insets.right, availableHeight: 0.0), synchronousLoads: false, previousItem: nil, nextItem: nil, completion: { node, apply in
+            messageItem.nodeConfiguredForParams(async: { f in f() }, params: ListViewItemLayoutParams(width: size.width, leftInset: insets.left, rightInset: insets.right, availableHeight: 0.0), synchronousLoads: true, previousItem: nil, nextItem: nil, completion: { node, apply in
                 itemNode = node
                 apply().1(ListViewItemApply(isOnScreen: true))
             })
-            messageItemNode = itemNode!
+            guard let configuredNode = itemNode else {
+                return
+            }
+            messageItemNode = configuredNode
             self.messageItemNode = messageItemNode
             self.buttonNode.addSubnode(messageItemNode)
         }
@@ -856,6 +859,10 @@ private final class SparseItemGridBindingImpl: SparseItemGridBinding, ListShimme
     func bindLayers(items: [SparseItemGrid.Item], layers: [SparseItemGridDisplayItem], size: CGSize, insets: UIEdgeInsets, synchronous: SparseItemGrid.Synchronous) {
         for i in 0 ..< items.count {
             guard let item = items[i] as? VisualMediaItem else {
+                continue
+            }
+
+            guard i < layers.count else {
                 continue
             }
 

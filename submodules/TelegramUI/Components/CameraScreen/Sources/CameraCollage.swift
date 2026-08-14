@@ -219,7 +219,7 @@ final class CameraCollage {
     }
     
     func moveItem(fromId: Int64, toId: Int64) {
-        guard let fromIndex = self.uniqueIds.firstIndex(where: { $0 == fromId }), let toIndex = self.uniqueIds.firstIndex(where: { $0 == toId }), toIndex < self.results.count else {
+        guard let fromIndex = self.uniqueIds.firstIndex(where: { $0 == fromId }), let toIndex = self.uniqueIds.firstIndex(where: { $0 == toId }), fromIndex < self.results.count, toIndex < self.results.count else {
             return
         }
         let fromItem = self.results[fromIndex]
@@ -368,7 +368,7 @@ outer:  for row in state.rows {
                             content = .asset(asset)
                         }
                     default:
-                        fatalError()
+                        continue
                     }
                     items.append(CameraScreenImpl.Result.VideoCollage.Item(
                         content: content,

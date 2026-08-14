@@ -4784,9 +4784,9 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
                         }, photoToolbarView: { backButton, doneButton, solidBackground, hasSendStarsButton in
                             return makeMediaPickerPhotoToolbarView(backButton: backButton, doneButton: doneButton, solidBackground: solidBackground, hasSendStarsButton: hasSendStarsButton)
                         }, sendMessagesWithSignals: { [weak self] signals, _, _, _ in
-                            if let strongSelf = self {
+                            if let strongSelf = self, let signals {
                                 strongSelf.interfaceInteraction?.setupEditMessage(messageId, { _ in })
-                                strongSelf.editMessageMediaWithLegacySignals(signals!)
+                                strongSelf.editMessageMediaWithLegacySignals(signals)
                             }
                         }, present: { [weak self] c, a in
                             self?.present(c, in: .window(.root), with: a)
@@ -9176,7 +9176,12 @@ public final class ChatControllerImpl: TelegramBaseController, ChatController, G
             }
         }
         
-        self.enqueueMediaMessageDisposable.set((legacyAssetPickerEnqueueMessages(context: self.context, account: self.context.account, signals: signals!, originalMediaReference: originalMediaReference)
+        guard let signals else {
+            completion()
+            return
+        }
+        
+        self.enqueueMediaMessageDisposable.set((legacyAssetPickerEnqueueMessages(context: self.context, account: self.context.account, signals: signals, originalMediaReference: originalMediaReference)
         |> deliverOnMainQueue).startStrict(next: { [weak self] items in
             guard let strongSelf = self else {
                 return

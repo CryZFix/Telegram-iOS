@@ -90,11 +90,14 @@ private final class PeerInfoScreenInfoItemNode: PeerInfoScreenItemNode {
             })
         } else {
             var itemNodeValue: ListViewItemNode?
-            infoItem.nodeConfiguredForParams(async: { $0() }, params: params, synchronousLoads: false, previousItem: nil, nextItem: nil, completion: { node, apply in
+            infoItem.nodeConfiguredForParams(async: { $0() }, params: params, synchronousLoads: true, previousItem: nil, nextItem: nil, completion: { node, apply in
                 itemNodeValue = node
                 apply().1(ListViewItemApply(isOnScreen: true))
             })
-            itemNode = itemNodeValue as! InfoItemNode
+            guard let configuredNode = itemNodeValue as? InfoItemNode else {
+                return 44.0
+            }
+            itemNode = configuredNode
             self.itemNode = itemNode
             self.addSubnode(itemNode)
         }

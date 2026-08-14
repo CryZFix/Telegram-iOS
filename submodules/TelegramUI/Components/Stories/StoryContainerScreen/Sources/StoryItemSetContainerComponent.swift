@@ -4798,6 +4798,9 @@ public final class StoryItemSetContainerComponent: Component {
                     }
                     
                     reactionContextNodeTransition = .immediate
+                    let storyContext = component.context
+                    let storyMyReaction = component.slice.item.storyItem.myReaction
+                    let storyAvailableReactions = component.availableReactions
                     reactionContextNode = ReactionContextNode(
                         context: component.context,
                         animationCache: component.context.animationCache,
@@ -4810,19 +4813,17 @@ public final class StoryItemSetContainerComponent: Component {
                         alwaysAllowPremiumReactions: false,
                         allPresetReactionsAreAvailable: false,
                         getEmojiContent: { [weak self] animationCache, animationRenderer in
-                            guard let self, let component = self.component else {
-                                preconditionFailure()
-                            }
-                            
                             let mappedReactionItems: [EmojiComponentReactionItem] = reactionItems.map { reaction -> EmojiComponentReactionItem in
                                 return EmojiComponentReactionItem(reaction: reaction.reaction.rawValue, file: reaction.stillAnimation)
                             }
                             
                             var selectedItems: Set<AnyHashable> = Set()
-                            if let myReaction = component.slice.item.storyItem.myReaction {
+                            let myReaction = self?.component?.slice.item.storyItem.myReaction ?? storyMyReaction
+                            let availableReactions = self?.component?.availableReactions ?? storyAvailableReactions
+                            if let myReaction {
                                 switch myReaction {
                                 case .builtin, .stars:
-                                    if let availableReactions = component.availableReactions {
+                                    if let availableReactions {
                                         for availableReaction in availableReactions.reactionItems {
                                             if availableReaction.reaction.rawValue == myReaction {
                                                 selectedItems.insert(AnyHashable(availableReaction.stillAnimation.fileId))
@@ -4836,7 +4837,7 @@ public final class StoryItemSetContainerComponent: Component {
                             }
                             
                             return EmojiPagerContentComponent.emojiInputData(
-                                context: component.context,
+                                context: self?.component?.context ?? storyContext,
                                 animationCache: animationCache,
                                 animationRenderer: animationRenderer,
                                 isStandalone: false,
@@ -4845,7 +4846,7 @@ public final class StoryItemSetContainerComponent: Component {
                                 topReactionItems: mappedReactionItems,
                                 areUnicodeEmojiEnabled: false,
                                 areCustomEmojiEnabled: true,
-                                chatPeerId: component.context.account.peerId,
+                                chatPeerId: (self?.component?.context ?? storyContext).account.peerId,
                                 selectedItems: selectedItems,
                                 premiumIfSavedMessages: false
                             )

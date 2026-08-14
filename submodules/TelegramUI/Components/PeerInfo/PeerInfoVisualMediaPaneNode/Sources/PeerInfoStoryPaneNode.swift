@@ -1189,6 +1189,10 @@ private final class SparseItemGridBindingImpl: SparseItemGridBinding {
                 continue
             }
 
+            guard i < layers.count else {
+                continue
+            }
+
             let displayItem = layers[i]
 
             guard let layer = displayItem.layer as? ItemLayer else {

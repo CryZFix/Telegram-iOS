@@ -91,11 +91,14 @@ final class PeerInfoScreenMultilineInputItemNode: PeerInfoScreenItemNode {
             })
         } else {
             var itemNodeValue: ListViewItemNode?
-            inputItem.nodeConfiguredForParams(async: { $0() }, params: params, synchronousLoads: false, previousItem: nil, nextItem: nil, completion: { node, apply in
+            inputItem.nodeConfiguredForParams(async: { $0() }, params: params, synchronousLoads: true, previousItem: nil, nextItem: nil, completion: { node, apply in
                 itemNodeValue = node
                 apply().1(ListViewItemApply(isOnScreen: true))
             })
-            itemNode = itemNodeValue as! ItemListMultilineInputItemNode
+            guard let configuredNode = itemNodeValue as? ItemListMultilineInputItemNode else {
+                return 44.0
+            }
+            itemNode = configuredNode
             self.itemNode = itemNode
             self.addSubnode(itemNode)
         }

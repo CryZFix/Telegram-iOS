@@ -332,8 +332,10 @@ extension ChatControllerImpl {
                                                             return
                                                         }
                                                         var viewControllers = navigationController.viewControllers
-                                                        let lastController = viewControllers.last as! ViewController
-                                                        if threadId != nil {
+                                                        guard let lastController = viewControllers.last as? ViewController else {
+                                                            return
+                                                        }
+                                                        if threadId != nil, viewControllers.count >= 2 {
                                                             viewControllers.remove(at: viewControllers.count - 2)
                                                             lastController.navigationPresentation = .modal
                                                         }

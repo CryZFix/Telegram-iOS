@@ -1369,7 +1369,9 @@ extension ChatControllerImpl {
                     if !inputText.string.isEmpty {
                         strongSelf.clearInputText()
                     }
-                    strongSelf.editMessageMediaWithLegacySignals(signals!)
+                    if let signals {
+                        strongSelf.editMessageMediaWithLegacySignals(signals)
+                    }
                     completion()
                 }, selectRecentlyUsedInlineBot: { [weak self] peer in
                     if let strongSelf = self, let addressName = peer.addressName {
@@ -1762,7 +1764,9 @@ extension ChatControllerImpl {
                     controller.completionBlock = { [weak legacyController] signals, silentPosting, scheduleTime in
                         if let legacyController = legacyController {
                             legacyController.dismiss(animated: true)
-                            completion(signals!, silentPosting, scheduleTime)
+                            if let signals {
+                                completion(signals, silentPosting, scheduleTime)
+                            }
                         }
                     }
                     controller.dismissalBlock = { [weak legacyController] in

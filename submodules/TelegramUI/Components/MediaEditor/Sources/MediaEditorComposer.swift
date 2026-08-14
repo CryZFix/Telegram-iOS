@@ -230,6 +230,8 @@ public final class MediaEditorComposer {
                     }
                 })
             }
+        } else {
+            completion(nil)
         }
     }
     

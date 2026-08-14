@@ -6694,8 +6694,20 @@ public final class MediaEditorScreenImpl: ViewController, MediaEditorScreen, UID
                 return videoPath
             case let .asset(asset):
                 return asset.localIdentifier
-            default:
-                fatalError()
+            case let .draft(draft, _):
+                return draft.path
+            case let .message(messages):
+                return messages.map(\.id).map(String.init(describing:)).joined(separator: ",")
+            case let .gift(gift):
+                return "gift-\(gift.slug)"
+            case let .sticker(file, _):
+                return "sticker-\(file.fileId.id)"
+            case let .videoCollage(items):
+                return "collage-\(items.count)"
+            case let .multiple(subjects):
+                return subjects.map(\.sourceIdentifier).joined(separator: ",")
+            case .empty:
+                return "empty"
             }
         }
         
@@ -8404,28 +8416,27 @@ public final class MediaEditorScreenImpl: ViewController, MediaEditorScreen, UID
                     }
                 }
                 guard let (_, mainItem) = maxDurationItem else {
-                    fatalError()
-                }
-                let assetSignal: Signal<AVAsset, NoError>
-                switch mainItem.content {
-                case let .video(path, _):
-                    assetSignal = .single(AVURLAsset(url: NSURL(fileURLWithPath: path) as URL))
-                case let .asset(asset):
-                    assetSignal = Signal { subscriber in
-                        PHImageManager.default().requestAVAsset(forVideo: asset, options: nil) { avAsset, _, _ in
-                            if let avAsset {
-                                subscriber.putNext(avAsset)
-                                subscriber.putCompletion()
+                    exportSubject = .complete()
+                } else {
+                    switch mainItem.content {
+                    case let .video(path, _):
+                        exportSubject = .single(.video(asset: AVURLAsset(url: NSURL(fileURLWithPath: path) as URL), isStory: true))
+                    case let .asset(asset):
+                        exportSubject = Signal { subscriber in
+                            PHImageManager.default().requestAVAsset(forVideo: asset, options: nil) { avAsset, _, _ in
+                                if let avAsset {
+                                    subscriber.putNext(avAsset)
+                                    subscriber.putCompletion()
+                                }
                             }
+                            return EmptyDisposable
                         }
-                        return EmptyDisposable
+                        |> map { asset in
+                            return .video(asset: asset, isStory: true)
+                        }
+                    default:
+                        exportSubject = .complete()
                     }
-                default:
-                    fatalError()
-                }
-                exportSubject = assetSignal
-                |> map { asset in
-                    return .video(asset: asset, isStory: true)
                 }
             case let .image(image, _, _, _, _):
                 exportSubject = .single(.image(image: image))

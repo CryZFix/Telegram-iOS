@@ -273,7 +273,8 @@ extension MediaEditorScreenImpl {
                     }
                 }
                 guard let (maxDuration, mainItem) = maxDurationItem else {
-                    fatalError()
+                    self.didComplete = false
+                    return
                 }
                 switch mainItem.content {
                 case let .video(path, _):
@@ -281,7 +282,8 @@ extension MediaEditorScreenImpl {
                 case let .asset(asset):
                     videoResult = .single(.asset(localIdentifier: asset.localIdentifier))
                 default:
-                    fatalError()
+                    self.didComplete = false
+                    return
                 }
                 let image = generateImage(storyDimensions, opaque: false, scale: 1.0, rotatedContext: { size, context in
                     context.clear(CGRect(origin: .zero, size: size))
@@ -447,7 +449,8 @@ extension MediaEditorScreenImpl {
                 
                 firstFrame = .single((image, nil))
             case .multiple:
-                fatalError()
+                self.didComplete = false
+                return
             }
             
             let _ = combineLatest(queue: Queue.mainQueue(), firstFrame, videoResult)
@@ -549,6 +552,8 @@ extension MediaEditorScreenImpl {
                     self?.didComplete = false
                 }
             })
+        } else {
+            self.didComplete = false
         }
     }
     
@@ -739,7 +744,7 @@ extension MediaEditorScreenImpl {
                 process(avAsset, .asset(localIdentifier: asset.localIdentifier))
             }
         default:
-            fatalError()
+            return
         }
     }
 
@@ -822,7 +827,7 @@ extension MediaEditorScreenImpl {
                 }
             }
         default:
-            fatalError()
+            return
         }
     }
 

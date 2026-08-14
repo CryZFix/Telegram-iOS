@@ -270,10 +270,13 @@ public final class DrawingMessageRenderer {
                         itemNode = node
                         apply().1(ListViewItemApply(isOnScreen: true))
                     })
-                    itemNode!.subnodeTransform = CATransform3DMakeScale(-1.0, 1.0, 1.0)
-                    itemNode!.isUserInteractionEnabled = false
-                    messageNodes.append(itemNode!)
-                    self.messagesContainerNode.addSubnode(itemNode!)
+                    guard let configuredNode = itemNode else {
+                        continue
+                    }
+                    configuredNode.subnodeTransform = CATransform3DMakeScale(-1.0, 1.0, 1.0)
+                    configuredNode.isUserInteractionEnabled = false
+                    messageNodes.append(configuredNode)
+                    self.messagesContainerNode.addSubnode(configuredNode)
                 }
                 self.messageNodes = messageNodes
             }

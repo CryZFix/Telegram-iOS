@@ -6,10 +6,11 @@
 ## [Unreleased]
 
 ### Fixed
-- **Profile:** intermittent crash when opening a user profile or Settings — adjacent media panes (Files/Music/Voice) no longer hit `preconditionFailure` during async row-height measurement; pane tabs with missing context are skipped instead of force-unwrapping.
+- **Profile:** intermittent crash when opening a user profile or Settings — adjacent media panes (Files/Music/Voice) no longer hit `preconditionFailure` during async row-height measurement; pane tabs with missing context are skipped instead of force-unwrapping; Settings list rows and media grid cells use synchronous node configuration with safe fallbacks.
 - **Forward:** пересылка из личного чата с первого раза — панель пересылки и подсветка в целевом чате больше не теряются из‑за гонки при открытии нового `ChatController`.
-- **Photo editor / camera:** `loadTexture` scale overflow, unguarded `capturePhoto`, main-thread CI/GPU readback, draft decode traps, cutout Core ML hop, collage JPEG off main, capture downscale to 2560px.
+- **Photo editor / camera:** `loadTexture` scale overflow, unguarded `capturePhoto`, main-thread CI/GPU readback, draft decode traps, cutout Core ML hop, collage JPEG off main, capture downscale to 2560px; Send no longer sticks when `resultImage` is nil; collage/export/subject paths fail soft instead of `fatalError`.
 - **Files:** Attach → File → Files no longer silently fails when security-scoped access returns false on imported sandbox URLs.
+- **Chat:** reaction picker no longer crashes if the chat/story controller is dismissed while emoji content loads; media picker `signals` nil no longer force-unwraps; forum thread navigation guards nav stack bounds.
 
 ## [v12.9.2-3846] — 2026-08-12
 

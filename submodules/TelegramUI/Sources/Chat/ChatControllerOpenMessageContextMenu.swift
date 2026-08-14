@@ -170,13 +170,11 @@ extension ChatControllerImpl {
                         
                         if allReactionsAreAvailable {
                             let premiumConfiguration = PremiumConfiguration.with(appConfiguration: context.currentAppConfiguration.with { $0 })
+                            let accountContext = self.context
+                            let chatPeerId = self.chatLocation.peerId
                             actions.getEmojiContent = { [weak self] animationCache, animationRenderer in
-                                guard let self else {
-                                    preconditionFailure()
-                                }
-                                
                                 return EmojiPagerContentComponent.emojiInputData(
-                                    context: self.context,
+                                    context: self?.context ?? accountContext,
                                     animationCache: animationCache,
                                     animationRenderer: animationRenderer,
                                     isStandalone: false,
@@ -185,18 +183,16 @@ extension ChatControllerImpl {
                                     topReactionItems: reactionItems,
                                     areUnicodeEmojiEnabled: false,
                                     areCustomEmojiEnabled: !premiumConfiguration.isPremiumDisabled,
-                                    chatPeerId: self.chatLocation.peerId,
+                                    chatPeerId: self?.chatLocation.peerId ?? chatPeerId,
                                     selectedItems: selectedReactions.files
                                 )
                             }
                         } else if reactionItems.count > 16 {
+                            let accountContext = self.context
+                            let chatPeerId = self.chatLocation.peerId
                             actions.getEmojiContent = { [weak self] animationCache, animationRenderer in
-                                guard let self else {
-                                    preconditionFailure()
-                                }
-                                
                                 return EmojiPagerContentComponent.emojiInputData(
-                                    context: self.context,
+                                    context: self?.context ?? accountContext,
                                     animationCache: animationCache,
                                     animationRenderer: animationRenderer,
                                     isStandalone: false,
@@ -205,7 +201,7 @@ extension ChatControllerImpl {
                                     topReactionItems: reactionItems,
                                     areUnicodeEmojiEnabled: false,
                                     areCustomEmojiEnabled: false,
-                                    chatPeerId: self.chatLocation.peerId,
+                                    chatPeerId: self?.chatLocation.peerId ?? chatPeerId,
                                     selectedItems: selectedReactions.files
                                 )
                             }

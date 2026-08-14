@@ -303,14 +303,14 @@ public class CameraPreviewView: MTKView {
             return nil
         }
         
-        self.setupTextureCache()
+        self.setupTextureCache(device: device)
     }
     
     required public init(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
     }
     
-    private func setupTextureCache() {
+    private func setupTextureCache(device: MTLDevice) {
         var newTextureCache: CVMetalTextureCache?
         if CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &newTextureCache) == kCVReturnSuccess {
             self.textureCache = newTextureCache
@@ -444,13 +444,16 @@ public class CameraPreviewView: MTKView {
         let width = CVPixelBufferGetWidth(previewPixelBuffer)
         let height = CVPixelBufferGetHeight(previewPixelBuffer)
         
-        if self.textureCache == nil {
-            self.setupTextureCache()
+        if self.textureCache == nil, let device = self.device {
+            self.setupTextureCache(device: device)
+        }
+        guard let textureCache = self.textureCache else {
+            return
         }
         var cvTextureOut: CVMetalTexture?
         CVMetalTextureCacheCreateTextureFromImage(
             kCFAllocatorDefault,
-            textureCache!,
+            textureCache,
             previewPixelBuffer,
             nil,
             .bgra8Unorm,

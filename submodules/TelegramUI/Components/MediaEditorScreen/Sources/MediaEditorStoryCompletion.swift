@@ -545,6 +545,8 @@ extension MediaEditorScreenImpl {
                             removeStoryDraft(engine: self.context.engine, path: draft.path, delete: true)
                         }
                     })
+                } else {
+                    self?.didComplete = false
                 }
             })
         }

@@ -104,11 +104,11 @@ public final class DrawingLocationEntity: DrawingEntity, Codable {
         self.color = try container.decodeIfPresent(DrawingColor.self, forKey: .color) ?? DrawingColor(color: .white)
         self.hasCustomColor = try container.decodeIfPresent(Bool.self, forKey: .hasCustomColor) ?? false
         
-        if let locationData = try container.decodeIfPresent(Data.self, forKey: .location) {
-            self.location = EnginePostboxDecoder(buffer: EngineMemoryBuffer(data: locationData)).decodeRootObject() as! TelegramMediaMap
-        } else {
-            fatalError()
+        guard let locationData = try container.decodeIfPresent(Data.self, forKey: .location),
+              let location = EnginePostboxDecoder(buffer: EngineMemoryBuffer(data: locationData)).decodeRootObject() as? TelegramMediaMap else {
+            throw DecodingError.dataCorruptedError(forKey: .location, in: container, debugDescription: "Missing or invalid location payload")
         }
+        self.location = location
         
         if let iconData = try container.decodeIfPresent(Data.self, forKey: .icon) {
             self.icon = EnginePostboxDecoder(buffer: EngineMemoryBuffer(data: iconData)).decodeRootObject() as? TelegramMediaFile

@@ -68,38 +68,39 @@ func textureRotatonForAVAsset(_ asset: AVAsset, mirror: Bool = false) -> Texture
 }
 
 func loadTexture(image: UIImage, device: MTLDevice) -> MTLTexture? {
-    func dataForImage(_ image: UIImage) -> UnsafeMutablePointer<UInt8> {
-        let imageRef = image.cgImage
-        let width = Int(image.size.width)
-        let height = Int(image.size.height)
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        
-        let rawData = UnsafeMutablePointer<UInt8>.allocate(capacity: width * height * 4)
-        let bytePerPixel = 4
-        let bytesPerRow = bytePerPixel * Int(width)
-        let bitsPerComponent = 8
-        let bitmapInfo = CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
-        if let context = CGContext(data: rawData, width: width, height: height, bitsPerComponent: bitsPerComponent, bytesPerRow: bytesPerRow, space: colorSpace, bitmapInfo: bitmapInfo.rawValue) {
-            context.clear(CGRect(x: 0, y: 0, width: width, height: height))
-            context.draw(imageRef!, in: CGRect(x: 0, y: 0, width: width, height: height))
-        }
-        return rawData
+    guard let imageRef = image.cgImage else {
+        return nil
+    }
+    // Use the CGImage pixel size for both the staging buffer and the Metal
+    // texture. The previous split (points for the buffer, points×scale for the
+    // texture) overflowed the heap whenever `image.scale != 1` — screenshots,
+    // asset catalog images, and some PHImageManager results — which is a hard
+    // crash on opening the photo editor, not a failed upload.
+    let width = imageRef.width
+    let height = imageRef.height
+    guard width > 0, height > 0 else {
+        return nil
     }
     
-    let width = Int(image.size.width * image.scale)
-    let height = Int(image.size.height * image.scale)
     let bytePerPixel = 4
     let bytesPerRow = bytePerPixel * width
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
+    let rawData = UnsafeMutablePointer<UInt8>.allocate(capacity: width * height * bytePerPixel)
+    defer {
+        rawData.deallocate()
+    }
+    let bitmapInfo = CGBitmapInfo(rawValue: CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue)
+    guard let context = CGContext(data: rawData, width: width, height: height, bitsPerComponent: 8, bytesPerRow: bytesPerRow, space: colorSpace, bitmapInfo: bitmapInfo.rawValue) else {
+        return nil
+    }
+    context.clear(CGRect(x: 0, y: 0, width: width, height: height))
+    context.draw(imageRef, in: CGRect(x: 0, y: 0, width: width, height: height))
     
-    var texture : MTLTexture?
-    let region = MTLRegionMake2D(0, 0, Int(width), Int(height))
     let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .bgra8Unorm, width: width, height: height, mipmapped: false)
-    texture = device.makeTexture(descriptor: textureDescriptor)
-    
-    let data = dataForImage(image)
-    texture?.replace(region: region, mipmapLevel: 0, withBytes: data, bytesPerRow: bytesPerRow)
-    data.deallocate()
-    
+    guard let texture = device.makeTexture(descriptor: textureDescriptor) else {
+        return nil
+    }
+    texture.replace(region: MTLRegionMake2D(0, 0, width, height), mipmapLevel: 0, withBytes: rawData, bytesPerRow: bytesPerRow)
     return texture
 }
 

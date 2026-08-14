@@ -227,6 +227,53 @@ byte-accounting.
    store's own serial queue before calling it, wrapped in a `beginBackgroundTask` so the write
    still gets to finish even if iOS suspends the app before the async hop would otherwise run.
 
+## Follow-up audit (2026-08-14): photo-editor / camera crash paths
+
+Triggered by "the app crashes for no reason while editing a photo." The 2026-08-11
+grid-camera `photo: false` reuse is one AVFoundation crash, but it is not the only
+one on this path. Several are watchdog/jetsam rather than an exception — they look
+like a random quit.
+
+### Fixed in this pass
+
+1. **`loadTexture` heap overflow when `UIImage.scale != 1`.** Staging buffer was
+   allocated from `image.size` (points) while the Metal texture was created from
+   `image.size * image.scale` (pixels). `replace(region:withBytes:)` then read
+   past the buffer. Hits screenshots, asset-catalog images, and some library
+   results the moment the editor uploads the photo to the GPU.
+2. **`takePhoto` still unguarded.** The MediaPicker tile now keeps the photo
+   output attached, but `CameraOutput.takePhoto` still called
+   `capturePhoto(with:delegate:)` with no check. A shutter tap before the session
+   is running, or any other `photo: false` reuse, is an `NSInvalidArgumentException`.
+   Now returns `.failed` unless the output is on a running session.
+3. **`makeEditorImageComposition` ran on the caller thread.** Save-to-photos already
+   hopped off main; Send / sticker / cover / item-switch did not. A 1080×1920
+   Core Image composite plus `createCGImage` on the main thread is a watchdog
+   kill. The function now always starts on `Queue.concurrentDefaultQueue()` and
+   still delivers the `UIImage` on main. Force-unwrap of `CIImage(image:)` and
+   divide-by-zero on empty extents are gone too.
+4. **Draft decode `fatalError` / `as!` / `!`.** Corrupt story drafts crashed
+   instead of failing decode: text animation frames, location stickers, unknown
+   `EditorToolKey`.
+5. **Cutout.** Pre-iOS 17 Core ML load ran on the caller (often main). Instance-mask
+   lookup `fatalError`'d if the pixel buffer had no base address, and could read
+   out of bounds on an edge tap.
+
+### Still open (do not guess without a device trace)
+
+| Item | Why it can still kill the process | Suggested fix |
+|---|---|---|
+| `ImageInputContext` uploads the full-res photo on the calling (main) thread | 12 MP × 4 bytes ≈ 48 MB alloc + GPU upload during editor open; hitch or jetsam | Load on `UniversalTextureSource`'s queue; first frame can be empty |
+| `resultImage` / `getTextureImage` GPU readback on main | Send path still reads the Metal texture synchronously to get a `UIImage` | Keep a cached last-rendered `UIImage` on the render queue |
+| `setupCollage` `jpegData` on main | Collage photos encode JPEG before playback is set up | Hop the encode; pass the path through |
+| `PhotoCaptureContext.createCGImage` of the full 12 MP buffer | Already off-main (session queue), but the pixel buffer is only valid for the callback — hopping without a copy is a use-after-free. Jetsam under memory pressure is still possible | Copy/`CIImage` render to a downscaled buffer, then hop |
+| Default `Camera()` still has `photo: false` | Fine for round-video / QR / drawing recorder; a future caller that taps shutter on the default init would have crashed, now fails soft | Leave the default; do not flip it globally |
+| `maybeGeneratePersonSegmentation` | Dead (never called). `.accurate` Vision on the caller would hitch if wired up | Delete, or run on a utility queue if revived |
+| Signposts / thermal throttling of the editor | Unchanged from the original audit | Still needs Instruments |
+
+Item 9 in the priority table (grid camera `photo: false`) stays fixed; items 17–21
+below are this pass.
+
 ## Priority order
 
 | # | Item | Status |
@@ -247,6 +294,11 @@ byte-accounting.
 | 14 | Indexed store instead of JSON | deferred pending measurement |
 | 15 | Global-queue → serial-queue audit | deferred pending measurement |
 | 16 | Media pipeline | not touched by design |
+| 17 | `loadTexture` point/pixel buffer overflow | fixed |
+| 18 | `takePhoto` unguarded `capturePhoto` | fixed |
+| 19 | `makeEditorImageComposition` on main + force unwrap | fixed |
+| 20 | Draft decode / cutout `fatalError` | fixed |
+| 21 | Full-res editor texture upload on main | open (see table above) |
 
 ## Liquid Glass + next thermal levers
 

@@ -110,6 +110,7 @@ final class CameraOutput: NSObject {
     let audioOutput = AVCaptureAudioDataOutput()
     let metadataOutput = AVCaptureMetadataOutput()
 
+    private weak var captureSession: AVCaptureSession?
     private var photoConnection: AVCaptureConnection?
     private var videoConnection: AVCaptureConnection?
     private var previewConnection: AVCaptureConnection?
@@ -154,6 +155,7 @@ final class CameraOutput: NSObject {
     }
     
     func configure(for session: CameraSession, device: CameraDevice, input: CameraInput, previewView: CameraSimplePreviewView?, audio: Bool, photo: Bool, metadata: Bool) {
+        self.captureSession = session.session
         if session.session.canAddOutput(self.videoOutput) {
             if session.hasMultiCam {
                 session.session.addOutputWithNoConnections(self.videoOutput)
@@ -173,14 +175,16 @@ final class CameraOutput: NSObject {
                 Logger.shared.log("Camera", "Can't add audio output")
             }
         }
-        if photo, session.session.canAddOutput(self.photoOutput) {
-            if session.hasMultiCam {
-                session.session.addOutputWithNoConnections(self.photoOutput)
+        if photo {
+            if session.session.canAddOutput(self.photoOutput) {
+                if session.hasMultiCam {
+                    session.session.addOutputWithNoConnections(self.photoOutput)
+                } else {
+                    session.session.addOutput(self.photoOutput)
+                }
             } else {
-                session.session.addOutput(self.photoOutput)
+                Logger.shared.log("Camera", "Can't add photo output")
             }
-        } else {
-            Logger.shared.log("Camera", "Can't add photo output")
         }
         if metadata, session.session.canAddOutput(self.metadataOutput) {
             session.session.addOutput(self.metadataOutput)
@@ -225,6 +229,7 @@ final class CameraOutput: NSObject {
     }
         
     func invalidate(for session: CameraSession, switchAudio: Bool = true) {
+        self.captureSession = nil
         if #available(iOS 13.0, *) {
             if let previewConnection = self.previewConnection {
                 if session.session.connections.contains(where: { $0 === previewConnection }) {
@@ -320,6 +325,15 @@ final class CameraOutput: NSObject {
             .single(.finished(image, nil, CACurrentMediaTime())) |> delay(0.5, queue: Queue.concurrentDefaultQueue())
         )
 #else
+        // `capturePhoto` throws NSInvalidArgumentException (uncaught in Swift)
+        // if the output is not attached to a running session — e.g. a preview-only
+        // Camera reused as a real capture session, or a shutter tap before start.
+        guard let session = self.captureSession,
+              session.isRunning,
+              session.outputs.contains(where: { $0 === self.photoOutput }),
+              !self.photoOutput.connections.isEmpty else {
+            return .single(.failed)
+        }
         let uniqueId = settings.uniqueID
         let photoCapture = PhotoCaptureContext(ciContext: self.ciContext, settings: settings, orientation: orientation, mirror: mirror)
         let _ = self.photoCaptureRequests.modify { dict in

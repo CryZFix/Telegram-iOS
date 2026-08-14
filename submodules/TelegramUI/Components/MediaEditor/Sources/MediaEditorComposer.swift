@@ -10,24 +10,31 @@ import TelegramCore
 import Postbox
 
 public func mediaEditorGenerateGradientImage(size: CGSize, colors: [UIColor]) -> UIImage? {
-    UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
-    if let context = UIGraphicsGetCurrentContext() {
-        let gradientColors = colors.map { $0.cgColor } as CFArray
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        
-        var locations: [CGFloat] = [0.0, 1.0]
-        let gradient = CGGradient(colorsSpace: colorSpace, colors: gradientColors, locations: &locations)!
-        context.drawLinearGradient(gradient, start: CGPoint(x: 0.0, y: 0.0), end: CGPoint(x: 0.0, y: size.height), options: CGGradientDrawingOptions())
+    guard size.width > 0.0, size.height > 0.0, colors.count >= 2 else {
+        return nil
     }
+    UIGraphicsBeginImageContextWithOptions(size, false, 1.0)
+    defer {
+        UIGraphicsEndImageContext()
+    }
+    guard let context = UIGraphicsGetCurrentContext() else {
+        return nil
+    }
+    let gradientColors = colors.map { $0.cgColor } as CFArray
+    let colorSpace = CGColorSpaceCreateDeviceRGB()
     
-    let image = UIGraphicsGetImageFromCurrentImageContext()!
-    UIGraphicsEndImageContext()
-    
-    return image
+    var locations: [CGFloat] = [0.0, 1.0]
+    guard let gradient = CGGradient(colorsSpace: colorSpace, colors: gradientColors, locations: &locations) else {
+        return nil
+    }
+    context.drawLinearGradient(gradient, start: CGPoint(x: 0.0, y: 0.0), end: CGPoint(x: 0.0, y: size.height), options: CGGradientDrawingOptions())
+    return UIGraphicsGetImageFromCurrentImageContext()
 }
 
 public func mediaEditorGetGradientColors(from image: UIImage) -> MediaEditor.GradientColors {
-    let context = DrawingContext(size: CGSize(width: 5.0, height: 5.0), scale: 1.0, clear: false)!
+    guard let context = DrawingContext(size: CGSize(width: 5.0, height: 5.0), scale: 1.0, clear: false) else {
+        return MediaEditor.GradientColors(top: .black, bottom: .black)
+    }
     context.withFlippedContext({ context in
         if let cgImage = image.cgImage {
             context.draw(cgImage, in: CGRect(x: 0.0, y: 0.0, width: 5.0, height: 5.0))
@@ -240,45 +247,52 @@ public final class MediaEditorComposer {
 }
 
 public func makeEditorImageComposition(context: CIContext, postbox: Postbox, inputImage: UIImage, dimensions: CGSize, outputDimensions: CGSize? = nil, values: MediaEditorValues, time: CMTime, textScale: CGFloat, completion: @escaping (UIImage?) -> Void) {
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
-    let inputImage = CIImage(image: inputImage, options: [.colorSpace: colorSpace])!
-    var drawingImage: CIImage?
-    
-    var maskImage: CIImage?
-    if values.isSticker {
-        maskImage = roundedCornersMaskImage(size: CGSize(width: floor(1080.0 * 0.97), height: floor(1080.0 * 0.97)))
-    } else if values.isAvatar {
-        maskImage = rectangleMaskImage(size: CGSize(width: 1080.0, height: 1080.0))
-    } else if let outputDimensions {
-        maskImage = rectangleMaskImage(size: outputDimensions.aspectFitted(CGSize(width: 1080.0, height: 1920.0)))
-    }
-    
-    if let drawing = values.drawing, let image = CIImage(image: drawing, options: [.colorSpace: colorSpace]) {
-        drawingImage = image.transformed(by: CGAffineTransform(translationX: -dimensions.width / 2.0, y: -dimensions.height / 2.0))
-    }
-    
-    var entities: [MediaEditorComposerEntity] = []
-    for entity in values.entities {
-        entities.append(contentsOf: composerEntitiesForDrawingEntity(postbox: postbox, textScale: textScale, entity: entity.entity, colorSpace: colorSpace))
-    }
-    
-    makeEditorImageFrameComposition(context: context, inputImage: inputImage, drawingImage: drawingImage, maskImage: maskImage, dimensions: dimensions, outputDimensions: outputDimensions, values: values, entities: entities, time: time, textScale: textScale, completion: { compositedImage in
-        if var compositedImage {
-            let outputDimensions = outputDimensions ?? dimensions
-            let scale = outputDimensions.width / compositedImage.extent.width
-            compositedImage = compositedImage.samplingLinear().transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-            
-            if let cgImage = context.createCGImage(compositedImage, from: CGRect(origin: .zero, size: compositedImage.extent.size)) {
-                Queue.mainQueue().async {
-                    completion(UIImage(cgImage: cgImage))
-                }
-                return
+    Queue.concurrentDefaultQueue().async {
+        let colorSpace = CGColorSpaceCreateDeviceRGB()
+        guard dimensions.width > .ulpOfOne, dimensions.height > .ulpOfOne, let ciInputImage = CIImage(image: inputImage, options: [.colorSpace: colorSpace]) else {
+            Queue.mainQueue().async {
+                completion(nil)
             }
+            return
         }
-        Queue.mainQueue().async {
-            completion(nil)
+        var drawingImage: CIImage?
+        
+        var maskImage: CIImage?
+        if values.isSticker {
+            maskImage = roundedCornersMaskImage(size: CGSize(width: floor(1080.0 * 0.97), height: floor(1080.0 * 0.97)))
+        } else if values.isAvatar {
+            maskImage = rectangleMaskImage(size: CGSize(width: 1080.0, height: 1080.0))
+        } else if let outputDimensions {
+            maskImage = rectangleMaskImage(size: outputDimensions.aspectFitted(CGSize(width: 1080.0, height: 1920.0)))
         }
-    })
+        
+        if let drawing = values.drawing, let image = CIImage(image: drawing, options: [.colorSpace: colorSpace]) {
+            drawingImage = image.transformed(by: CGAffineTransform(translationX: -dimensions.width / 2.0, y: -dimensions.height / 2.0))
+        }
+        
+        var entities: [MediaEditorComposerEntity] = []
+        for entity in values.entities {
+            entities.append(contentsOf: composerEntitiesForDrawingEntity(postbox: postbox, textScale: textScale, entity: entity.entity, colorSpace: colorSpace))
+        }
+        
+        makeEditorImageFrameComposition(context: context, inputImage: ciInputImage, drawingImage: drawingImage, maskImage: maskImage, dimensions: dimensions, outputDimensions: outputDimensions, values: values, entities: entities, time: time, textScale: textScale, completion: { compositedImage in
+            if var compositedImage, compositedImage.extent.width > .ulpOfOne, compositedImage.extent.height > .ulpOfOne {
+                let outputDimensions = outputDimensions ?? dimensions
+                let scale = outputDimensions.width / compositedImage.extent.width
+                compositedImage = compositedImage.samplingLinear().transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+                
+                if let cgImage = context.createCGImage(compositedImage, from: CGRect(origin: .zero, size: compositedImage.extent.size)) {
+                    Queue.mainQueue().async {
+                        completion(UIImage(cgImage: cgImage))
+                    }
+                    return
+                }
+            }
+            Queue.mainQueue().async {
+                completion(nil)
+            }
+        })
+    }
 }
 
 private func makeEditorImageFrameComposition(context: CIContext, inputImage: CIImage, drawingImage: CIImage?, maskImage: CIImage?, dimensions: CGSize, outputDimensions: CGSize? = nil, values: MediaEditorValues, entities: [MediaEditorComposerEntity], time: CMTime, textScale: CGFloat = 1.0, completion: @escaping (CIImage?) -> Void) {
@@ -293,7 +307,7 @@ private func makeEditorImageFrameComposition(context: CIContext, inputImage: CII
     
     if values.isStory || values.isSticker || values.isAvatar || values.isCover {
         resultImage = mediaImage.samplingLinear().composited(over: resultImage)
-    } else {
+    } else if mediaImage.extent.width > .ulpOfOne {
         let initialScale = dimensions.width / mediaImage.extent.width
         var horizontalScale = initialScale
         if values.cropMirroring {
@@ -341,10 +355,12 @@ private func makeEditorImageFrameComposition(context: CIContext, inputImage: CII
                 if cropRect.isEmpty {
                     cropRect = CGRect(origin: .zero, size: originalDimensions)
                 }
-                let scale = dimensions.width / originalDimensions.width
-                let scaledCropRect = CGRect(origin: CGPoint(x: cropRect.minX * scale, y: dimensions.height - cropRect.maxY * scale), size: CGSize(width: cropRect.width * scale, height: cropRect.height * scale))
-                resultImage = resultImage.cropped(to: scaledCropRect)
-                resultImage = resultImage.transformed(by: CGAffineTransformMakeTranslation(-scaledCropRect.minX, -scaledCropRect.minY))
+                if originalDimensions.width > .ulpOfOne {
+                    let scale = dimensions.width / originalDimensions.width
+                    let scaledCropRect = CGRect(origin: CGPoint(x: cropRect.minX * scale, y: dimensions.height - cropRect.maxY * scale), size: CGSize(width: cropRect.width * scale, height: cropRect.height * scale))
+                    resultImage = resultImage.cropped(to: scaledCropRect)
+                    resultImage = resultImage.transformed(by: CGAffineTransformMakeTranslation(-scaledCropRect.minX, -scaledCropRect.minY))
+                }
                 
                 if let orientation = values.cropOrientation, orientation != .up {
                     let rotation = orientation.rotation
@@ -383,7 +399,7 @@ private func makeEditorImageFrameComposition(context: CIContext, inputImage: CII
                 if let scale = entity.baseScale {
                     baseScale = scale
                 } else if let _ = entity.baseDrawingSize {
-                } else if let baseSize = entity.baseSize {
+                } else if let baseSize = entity.baseSize, image.extent.width > .ulpOfOne {
                     baseScale = baseSize.width / image.extent.width
                 }
                 

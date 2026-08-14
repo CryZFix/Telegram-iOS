@@ -258,17 +258,26 @@ like a random quit.
 5. **Cutout.** Pre-iOS 17 Core ML load ran on the caller (often main). Instance-mask
    lookup `fatalError`'d if the pixel buffer had no base address, and could read
    out of bounds on an edge tap.
+6. **`ImageInputContext` full-res upload on main.** `loadTexture` + `imageHasTransparency`
+   (a full histogram) now run on `UniversalTextureSource`'s queue. The first
+   preview frame can be empty; `onReady` retriggers render when the texture lands.
+7. **`resultImage` GPU readback on Send.** Still-image frames cache a `UIImage` on
+   the render-complete handler (background). Send hits the cache; a miss still
+   falls back to a synchronous readback. Video leaves caching off (cover remains sync).
+8. **`setupCollage` JPEG on main.** Encode + write hop to a utility queue; playback
+   setup runs on main after the files exist.
+9. **12 MP `createCGImage` in `PhotoCaptureContext`.** The pixel buffer is only
+   valid for the callback, so this stays on the session queue (already off-main)
+   but downscales to a 2560 long edge before allocating the `CGImage`. Hopping
+   would require a 12 MP copy, which is worse for jetsam.
+10. **Dead `maybeGeneratePersonSegmentation`.** Never called. Deleted with its
+    unused `CVMetalTextureCache` and `import Vision`.
 
 ### Still open (do not guess without a device trace)
 
 | Item | Why it can still kill the process | Suggested fix |
 |---|---|---|
-| `ImageInputContext` uploads the full-res photo on the calling (main) thread | 12 MP × 4 bytes ≈ 48 MB alloc + GPU upload during editor open; hitch or jetsam | Load on `UniversalTextureSource`'s queue; first frame can be empty |
-| `resultImage` / `getTextureImage` GPU readback on main | Send path still reads the Metal texture synchronously to get a `UIImage` | Keep a cached last-rendered `UIImage` on the render queue |
-| `setupCollage` `jpegData` on main | Collage photos encode JPEG before playback is set up | Hop the encode; pass the path through |
-| `PhotoCaptureContext.createCGImage` of the full 12 MP buffer | Already off-main (session queue), but the pixel buffer is only valid for the callback — hopping without a copy is a use-after-free. Jetsam under memory pressure is still possible | Copy/`CIImage` render to a downscaled buffer, then hop |
 | Default `Camera()` still has `photo: false` | Fine for round-video / QR / drawing recorder; a future caller that taps shutter on the default init would have crashed, now fails soft | Leave the default; do not flip it globally |
-| `maybeGeneratePersonSegmentation` | Dead (never called). `.accurate` Vision on the caller would hitch if wired up | Delete, or run on a utility queue if revived |
 | Signposts / thermal throttling of the editor | Unchanged from the original audit | Still needs Instruments |
 
 Item 9 in the priority table (grid camera `photo: false`) stays fixed; items 17–21
@@ -298,7 +307,11 @@ below are this pass.
 | 18 | `takePhoto` unguarded `capturePhoto` | fixed |
 | 19 | `makeEditorImageComposition` on main + force unwrap | fixed |
 | 20 | Draft decode / cutout `fatalError` | fixed |
-| 21 | Full-res editor texture upload on main | open (see table above) |
+| 21 | Full-res editor texture upload on main | fixed |
+| 22 | Cached `resultImage` after GPU complete | fixed |
+| 23 | Collage JPEG encode on main | fixed |
+| 24 | 12 MP capture `createCGImage` downscale | fixed |
+| 25 | Dead person-segmentation path | deleted |
 
 ## Liquid Glass + next thermal levers
 

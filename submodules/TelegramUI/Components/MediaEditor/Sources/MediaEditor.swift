@@ -2,7 +2,6 @@ import Foundation
 import UIKit
 import Metal
 import MetalKit
-import Vision
 import Photos
 import SwiftSignalKit
 import Display
@@ -277,8 +276,6 @@ public final class MediaEditor {
     public var maskUpdated: (UIImage, Bool) -> Void = { _, _ in }
     
     public var classificationUpdated: ([(String, Float)]) -> Void = { _ in }
-    
-    private var textureCache: CVMetalTextureCache!
     
     public var hasPortraitMask: Bool {
         return self.renderChain.blurPass.maskTexture != nil
@@ -627,13 +624,20 @@ public final class MediaEditor {
     }
     
     public func replaceSource(_ image: UIImage, additionalImage: UIImage?, time: CMTime, mirror: Bool) {
-        guard let device = self.renderer.effectiveDevice, let texture = loadTexture(image: image, device: device) else {
+        guard let device = self.renderer.effectiveDevice else {
             return
         }
-        let additionalTexture = additionalImage.flatMap { loadTexture(image: $0, device: device) }
-        self.renderer.videoFinishPass.additionalTextureRotation = mirror ? .rotate0DegreesMirrored : .rotate0Degrees
-        let hasTransparency = imageHasTransparency(image)
-        self.renderer.consume(main: .texture(texture, time, hasTransparency, nil, 1.0, .zero), additionals: additionalTexture.flatMap { [.texture($0, time, false, nil, 1.0, .zero)] } ?? [], render: true, displayEnabled: false)
+        Queue.concurrentDefaultQueue().async { [weak self] in
+            guard let self, let texture = loadTexture(image: image, device: device) else {
+                return
+            }
+            let additionalTexture = additionalImage.flatMap { loadTexture(image: $0, device: device) }
+            let hasTransparency = imageHasTransparency(image)
+            Queue.mainQueue().async {
+                self.renderer.videoFinishPass.additionalTextureRotation = mirror ? .rotate0DegreesMirrored : .rotate0Degrees
+                self.renderer.consume(main: .texture(texture, time, hasTransparency, nil, 1.0, .zero), additionals: additionalTexture.flatMap { [.texture($0, time, false, nil, 1.0, .zero)] } ?? [], render: true, displayEnabled: false)
+            }
+        }
     }
     
     private func setupSource(andPlay: Bool) {
@@ -642,10 +646,6 @@ public final class MediaEditor {
         }
         
         let context = self.context
-        if let device = renderTarget.mtlDevice, CVMetalTextureCacheCreate(nil, nil, device, nil, &self.textureCache) != kCVReturnSuccess {
-            print("error")
-        }
-            
         struct TextureSourceResult {
             let image: UIImage?
             let nightImage: UIImage?
@@ -905,6 +905,7 @@ public final class MediaEditor {
             
                 self.player = textureSourceResult.player
                 self.playerPromise.set(.single(self.player))
+                self.renderer.cachesFinalImage = textureSourceResult.player == nil
                             
                 if let image = textureSourceResult.image {
                     if self.values.nightTheme, let nightImage = textureSourceResult.nightImage {
@@ -1759,66 +1760,71 @@ public final class MediaEditor {
     
     public func setupCollage(_ items: [MediaEditor.Subject.VideoCollageItem]) {
         let longestItem = longestCollageItem(items)
-        var collage: [MediaEditorValues.VideoCollageItem] = []
-        
-        var index = 0
-        var passedFirstVideo = false
-        var mainVideoIsMuted = false
-        
-        for item in items {
-            var content: MediaEditorValues.VideoCollageItem.Content
-            var isVideo = false
-            if item.content == longestItem?.content {
-                content = .main
-                isVideo = true
-            } else {
-                switch item.content {
-                case let .image(image):
-                    let tempImagePath = NSTemporaryDirectory() + "\(Int64.random(in: Int64.min ... Int64.max)).jpg"
-                    if let data = image.jpegData(compressionQuality: 0.85) {
-                        try? data.write(to: URL(fileURLWithPath: tempImagePath))
-                    }
-                    content = .imageFile(path: tempImagePath)
-                case let .video(path, _):
-                    content = .videoFile(path: path)
+        Queue.concurrentDefaultQueue().async { [weak self] in
+            var collage: [MediaEditorValues.VideoCollageItem] = []
+            
+            var passedFirstVideo = false
+            var mainVideoIsMuted = false
+            
+            for item in items {
+                var content: MediaEditorValues.VideoCollageItem.Content
+                var isVideo = false
+                if item.content == longestItem?.content {
+                    content = .main
                     isVideo = true
-                case let .asset(asset):
-                    content = .asset(localIdentifier: asset.localIdentifier, isVideo: asset.mediaType == .video)
-                    isVideo = asset.mediaType == .video
+                } else {
+                    switch item.content {
+                    case let .image(image):
+                        let tempImagePath = NSTemporaryDirectory() + "\(Int64.random(in: Int64.min ... Int64.max)).jpg"
+                        if let data = image.jpegData(compressionQuality: 0.85) {
+                            try? data.write(to: URL(fileURLWithPath: tempImagePath))
+                        }
+                        content = .imageFile(path: tempImagePath)
+                    case let .video(path, _):
+                        content = .videoFile(path: path)
+                        isVideo = true
+                    case let .asset(asset):
+                        content = .asset(localIdentifier: asset.localIdentifier, isVideo: asset.mediaType == .video)
+                        isVideo = asset.mediaType == .video
+                    }
+                }
+                let collageItem = MediaEditorValues.VideoCollageItem(
+                    content: content,
+                    frame: item.frame,
+                    contentScale: item.contentScale,
+                    contentOffset: item.contentOffset,
+                    videoTrimRange: 0 ..< item.duration,
+                    videoOffset: nil,
+                    videoVolume: passedFirstVideo ? 0.0 : nil
+                )
+                collage.append(collageItem)
+                if isVideo {
+                    passedFirstVideo = true
+                }
+                
+                if case .main = collageItem.content, let videoVolume = collageItem.videoVolume, videoVolume.isZero {
+                    mainVideoIsMuted = true
                 }
             }
-            let item = MediaEditorValues.VideoCollageItem(
-                content: content,
-                frame: item.frame,
-                contentScale: item.contentScale,
-                contentOffset: item.contentOffset,
-                videoTrimRange: 0 ..< item.duration,
-                videoOffset: nil,
-                videoVolume: passedFirstVideo ? 0.0 : nil
-            )
-            collage.append(item)
-            if isVideo {
-                passedFirstVideo = true
-            }
-            index += 1
             
-            if item.content == .main, let videoVolume = item.videoVolume, videoVolume.isZero {
-                mainVideoIsMuted = true
-            }
-        }
-        
-        self.updateValues(mode: .skipRendering) { values in
-            return values.withUpdatedCollage(collage)
-        }
-        
-        if mainVideoIsMuted {
-            Queue.mainQueue().after(0.3) {
-                self.setVideoVolume(0.0)
-            }
-        }
+            Queue.mainQueue().async {
+                guard let self else {
+                    return
+                }
+                self.updateValues(mode: .skipRendering) { values in
+                    return values.withUpdatedCollage(collage)
+                }
                 
-        self.setupAdditionalVideoPlayback()
-        self.updateAdditionalVideoPlaybackRange()
+                if mainVideoIsMuted {
+                    Queue.mainQueue().after(0.3) {
+                        self.setVideoVolume(0.0)
+                    }
+                }
+                
+                self.setupAdditionalVideoPlayback()
+                self.updateAdditionalVideoPlaybackRange()
+            }
+        }
     }
     
     public func setAdditionalVideo(_ path: String?, isDual: Bool = false, mirroringChanges: [VideoMirroringChange] = [], positionChanges: [VideoPositionChange]) {
@@ -2312,37 +2318,6 @@ public final class MediaEditor {
         }
         Queue.concurrentDefaultQueue().async {
             f(image, self.resultImage)
-        }
-    }
-    
-    private func maybeGeneratePersonSegmentation(_ image: UIImage?) {
-        if #available(iOS 15.0, *), let cgImage = image?.cgImage {
-            let faceRequest = VNDetectFaceRectanglesRequest { [weak self] request, _ in
-                guard let _ = request.results?.first as? VNFaceObservation else { return }
-                
-                let personRequest = VNGeneratePersonSegmentationRequest(completionHandler: { [weak self] request, error in
-                    if let self, let result = (request as? VNGeneratePersonSegmentationRequest)?.results?.first {
-                        Queue.mainQueue().async {
-                            self.renderChain.blurPass.maskTexture = pixelBufferToMTLTexture(pixelBuffer: result.pixelBuffer, textureCache: self.textureCache)
-                        }
-                    }
-                })
-                personRequest.qualityLevel = .accurate
-                personRequest.outputPixelFormat = kCVPixelFormatType_OneComponent8
-                
-                let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-                do {
-                    try handler.perform([personRequest])
-                } catch {
-                    print(error)
-                }
-            }
-            let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
-            do {
-                try handler.perform([faceRequest])
-            } catch {
-                print(error)
-            }
         }
     }
     

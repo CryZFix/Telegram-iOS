@@ -104,20 +104,6 @@ func loadTexture(image: UIImage, device: MTLDevice) -> MTLTexture? {
     return texture
 }
 
-func pixelBufferToMTLTexture(pixelBuffer: CVPixelBuffer, textureCache: CVMetalTextureCache) -> MTLTexture? {
-    let width = CVPixelBufferGetWidth(pixelBuffer)
-    let height = CVPixelBufferGetHeight(pixelBuffer)
-
-    let format: MTLPixelFormat = .r8Unorm
-    var textureRef : CVMetalTexture?
-    let status = CVMetalTextureCacheCreateTextureFromImage(nil, textureCache, pixelBuffer, nil, format, width, height, 0, &textureRef)
-    if status == kCVReturnSuccess {
-        return CVMetalTextureGetTexture(textureRef!)
-    }
-
-    return nil
-}
-
 func getTextureImage(device: MTLDevice, texture: MTLTexture, mirror: Bool = false) -> UIImage? {
     let colorSpace = CGColorSpaceCreateDeviceRGB()
     let context = CIContext(mtlDevice: device, options: [:])

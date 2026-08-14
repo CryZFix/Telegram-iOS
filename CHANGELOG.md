@@ -2,11 +2,8 @@
 
 Все notable-изменения этого форка. Формат loosely [Keep a Changelog](https://keepachangelog.com/).
 Тег релиза = `v{app}-{tagSuffix}` (например `v12.9.2-3845`); CI кладёт секцию тега в GitHub Release notes.
-Теги `*-pre` публикуются как GitHub **pre-release** (не Latest).
 
-## [v12.9.2-3849-pre] — 2026-08-14
-
-Pre-release: crash stability — профиль, редактор/камера, чат, пересылка, файлы. Sideload smoke, не Latest.
+## [v12.9.2-3849] — 2026-08-14
 
 ### Fixed
 - **Profile:** вылет при открытии своего/чужого профиля — async row-height / Settings rows / media grid; gift-cover CALayer presentation copies.

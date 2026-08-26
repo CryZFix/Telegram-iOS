@@ -44,6 +44,9 @@ public final class WebProxyManager {
     private var sidecar: WebProxySidecar?
     private var configuration: WebProxyConfiguration?
     private var endpoint: LoopbackEndpoint?
+    /// Retained across a brief restart so ProxySettings does not fall through to 127.0.0.1:1
+    /// (unreachable) while the new sidecar is still bootstrapping.
+    private var lastGoodEndpoint: LoopbackEndpoint?
     private var startingConfiguration: WebProxyConfiguration?
     private var startingSince: Double = 0.0
     private var startGeneration: UInt64 = 0
@@ -51,6 +54,9 @@ public final class WebProxyManager {
     private var lastFailureTime: Double = 0.0
     private var consecutiveFailureCount: Int = 0
     private var sidecarReadySince: Double = 0.0
+    /// Debounce foreground restarts so rapid active/resign cycles do not stack tear-downs.
+    private var lastBecomeActiveRestart: Double = 0.0
+    private static let becomeActiveRestartMinInterval: Double = 1.0
     
     private var nextSidecarEventToken: SidecarEventToken = 0
     private var sidecarEventHandlers: [SidecarEventToken: () -> Void] = [:]
@@ -61,7 +67,7 @@ public final class WebProxyManager {
     public var activeLoopbackEndpoint: LoopbackEndpoint? {
         self.lock.lock()
         defer { self.lock.unlock() }
-        return self.endpoint
+        return self.endpoint ?? self.lastGoodEndpoint
     }
     
     public var activeConfiguration: WebProxyConfiguration? {
@@ -72,8 +78,18 @@ public final class WebProxyManager {
     
     public func isReady(for configuration: WebProxyConfiguration) -> Bool {
         self.lock.lock()
-        defer { self.lock.unlock() }
-        return self.configuration == configuration && self.endpoint != nil
+        let live = self.configuration == configuration && self.endpoint != nil
+        let hasFallback = self.lastGoodEndpoint != nil
+        self.lock.unlock()
+        if live {
+            return true
+        }
+        // While a replacement sidecar is bootstrapping, keep reporting ready if we still have
+        // the previous loopback port so MtProto does not get rebinding to 127.0.0.1:1.
+        self.startLock.lock()
+        let starting = self.startingConfiguration == configuration
+        self.startLock.unlock()
+        return starting && hasFallback
     }
     
     /// Registers a handler invoked on the main queue when the sidecar becomes ready, fails, or stops.
@@ -110,6 +126,7 @@ public final class WebProxyManager {
             
             self.lock.lock()
             self.stopLocked()
+            self.lastGoodEndpoint = nil
             self.lock.unlock()
             return true
         }
@@ -133,34 +150,73 @@ public final class WebProxyManager {
     /// proxy settings do not change on resume, so `configure` is never called again and the UI
     /// sits on "Connecting" forever. Forcing a clean restart here clears that stall.
     public func applicationDidBecomeActive() {
-        self.lock.lock()
-        let active = self.configuration
-        self.lock.unlock()
-        
+        let now = CFAbsoluteTimeGetCurrent()
         self.startLock.lock()
-        let starting = self.startingConfiguration
-        // Resume is an explicit user action: do not make re-enable wait out a cooldown left
-        // over from a background long-poll death.
+        if now - self.lastBecomeActiveRestart < WebProxyManager.becomeActiveRestartMinInterval {
+            self.startLock.unlock()
+            return
+        }
+        self.lastBecomeActiveRestart = now
         self.lastFailedConfiguration = nil
         self.consecutiveFailureCount = 0
+        let starting = self.startingConfiguration
         self.startLock.unlock()
+        
+        self.lock.lock()
+        let active = self.configuration
+        let sidecar = self.sidecar
+        let hasEndpoint = self.endpoint != nil
+        self.lock.unlock()
         
         let target = active ?? starting
         guard let target = target else {
             return
         }
         
-        // Tear down any half-dead carrier / listener so scheduleStart builds a fresh session.
+        // Prefer in-place carrier rebuild on the SAME loopback port. Overlapping a second
+        // NWListener while MtProto still hammered the dead previous port produced connection-
+        // refused storms and SIGABRT on resume (see client logs: 127.0.0.1:N Connection refused
+        // immediately followed by MetricKit signal=6).
+        if hasEndpoint, let sidecar = sidecar {
+            sidecar.reconnectTransport { [weak self] result in
+                guard let self else {
+                    return
+                }
+                if case .failure = result {
+                    self.sequentialRestart(configuration: target)
+                }
+            }
+            return
+        }
+        self.sequentialRestart(configuration: target)
+    }
+    
+    /// Stop the current sidecar, then schedule a fresh one. Used when there is no live endpoint
+    /// or in-place transport reconnect failed. Not overlapping — only one listener at a time.
+    private func sequentialRestart(configuration: WebProxyConfiguration) {
         self.startLock.lock()
         self.startGeneration &+= 1
         self.startingConfiguration = nil
         self.startLock.unlock()
         
         self.lock.lock()
-        self.stopLocked()
+        if let previous = self.sidecar {
+            previous.setFailureHandler { }
+            self.sidecar = nil
+            self.configuration = nil
+            self.endpoint = nil
+            self.sidecarReadySince = 0.0
+            DispatchQueue.global(qos: .utility).async {
+                previous.stop()
+            }
+        } else {
+            self.configuration = nil
+            self.endpoint = nil
+            self.sidecarReadySince = 0.0
+        }
         self.lock.unlock()
         
-        self.scheduleStart(configuration: target)
+        self.scheduleStart(configuration: configuration)
     }
     
     private func scheduleStart(configuration: WebProxyConfiguration) {
@@ -221,13 +277,24 @@ public final class WebProxyManager {
         switch result {
         case let .success(endpoint):
             self.lock.lock()
-            self.sidecar?.stop()
+            let previous = self.sidecar
+            previous?.setFailureHandler { }
             self.sidecar = sidecar
             self.configuration = configuration
             self.endpoint = LoopbackEndpoint(host: endpoint.host, port: endpoint.port)
+            self.lastGoodEndpoint = self.endpoint
             self.sidecarReadySince = CFAbsoluteTimeGetCurrent()
-            sidecar?.setFailureHandler { [weak self] in
-                self?.handleSidecarFailure()
+            sidecar?.setFailureHandler { [weak self, weak sidecar] in
+                guard let self, let sidecar else {
+                    return
+                }
+                self.lock.lock()
+                let isCurrent = self.sidecar === sidecar
+                self.lock.unlock()
+                guard isCurrent else {
+                    return
+                }
+                self.handleSidecarFailure()
             }
             self.lock.unlock()
             
@@ -240,6 +307,11 @@ public final class WebProxyManager {
             self.startLock.unlock()
 
             self.notifySidecarEvent()
+            if let previous = previous {
+                DispatchQueue.global(qos: .utility).async {
+                    previous.stop()
+                }
+            }
         case .failure:
             sidecar?.stop()
             self.startLock.lock()
@@ -332,6 +404,7 @@ public final class WebProxyManager {
         self.configuration = nil
         self.endpoint = nil
         self.sidecarReadySince = 0.0
+        // lastGoodEndpoint intentionally retained for resolution during the next bootstrap.
     }
     
     private func notifySidecarEvent() {

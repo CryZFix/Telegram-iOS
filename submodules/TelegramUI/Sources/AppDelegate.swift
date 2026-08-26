@@ -46,6 +46,7 @@ import NavigationBarImpl
 import ContextUI
 import ContextControllerImpl
 import ProxyServerPreviewScreen
+import WebProxyTransport
 
 #if canImport(AppCenter)
 import AppCenter
@@ -2030,6 +2031,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         self.runForegroundTasks()
         
         SharedDisplayLinkDriver.shared.updateForegroundState(self.isActiveValue)
+
+        WebProxyManager.shared.applicationDidBecomeActive()
     }
     
     func runForegroundTasks() {
@@ -2074,6 +2077,8 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         }
         
         //cancelWindowPanGestures(view: self.mainWindow.hostView.containerView)
+
+        WebProxyManager.shared.applicationDidBecomeActive()
     }
     
     func applicationWillTerminate(_ application: UIApplication) {

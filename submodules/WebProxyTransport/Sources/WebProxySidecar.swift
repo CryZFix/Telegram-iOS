@@ -292,12 +292,15 @@ public final class WebProxySidecar {
             self.stopLocked()
             return
         }
-        // A hung previous reconnect must not block resume forever.
+        // A carrier failure frequently arrives just before `didBecomeActive`. The old code
+        // cancelled the bootstrap already in flight in that case and immediately started a
+        // second one. Its stale callbacks could then tear down the listener while the manager
+        // still published its loopback endpoint, leaving every MTProto connection on permanent
+        // `Connection refused` / Connecting. One reconnect owns the listener at a time; its
+        // timeout and failure path already provide recovery if it is genuinely hung.
         if self.transportReconnectInFlight {
-            self.transportReconnectGeneration &+= 1
-            self.carrier?.stop()
-            self.carrier = nil
-            self.transportReconnectInFlight = false
+            completion?(.success(()))
+            return
         }
         self.transportReconnectInFlight = true
         self.consecutiveTransportReconnects += 1

@@ -1,6 +1,11 @@
 import Foundation
 import UIKit
 import MetricKit
+import MachO
+// Explicit, for `malloc_zone_statistics` and the `mach_header` layouts: neither Foundation nor
+// MachO promises to re-export the C library, and this file is the only Swift in the tree that
+// reaches for either.
+import Darwin
 import TelegramCore
 
 /// Thermal and CPU telemetry.
@@ -43,6 +48,8 @@ public enum ForkPerformanceTelemetry {
         self.thermalState = ProcessInfo.processInfo.thermalState
         Logger.shared.log("Perf", "thermal state at launch: \(ForkPerformanceTelemetry.describe(self.thermalState))")
 
+        self.logLoadedImages()
+
         // Process-lifetime observer, deliberately never removed.
         NotificationCenter.default.addObserver(
             forName: ProcessInfo.thermalStateDidChangeNotification,
@@ -65,6 +72,203 @@ public enum ForkPerformanceTelemetry {
         let subscriber = ForkMetricSubscriber()
         self.metricSubscriber = subscriber
         MXMetricManager.shared.add(subscriber)
+
+        self.installMemoryWarningObserver()
+        self.installMainThreadStallWatchdog()
+        self.installHeartbeat()
+    }
+
+    /// Memory pressure was entirely unrecorded. A device log could show resident size falling step
+    /// by step before the process died — the app evicting caches under pressure — without a single
+    /// line saying pressure had arrived. That is the difference between a jetsam kill and every
+    /// other kind, and it was not in the log.
+    private static func installMemoryWarningObserver() {
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.didReceiveMemoryWarningNotification,
+            object: nil,
+            queue: .main,
+            using: { _ in
+                Logger.shared.log("Memory", "received memory warning, resident \(getMemoryConsumption() / (1024 * 1024)) MB, thermal \(ForkPerformanceTelemetry.describe(self.thermalState))")
+            }
+        )
+    }
+
+    /// A watchdog kill is a main thread that stopped answering, and nothing measured that. A timer
+    /// on a background queue posts a heartbeat to the main queue and notes how late the answer is;
+    /// a stall long enough to matter is logged with its duration, so an uncatchable kill leaves a
+    /// timestamped stall behind it instead of nothing.
+    ///
+    /// The check runs at 1 Hz and does no work beyond two timestamps, so it costs nothing next to
+    /// the memory timer already running at the same rate.
+    private static let stallReportThreshold: Double = 1.0
+    private static let stallQueue = DispatchQueue(label: "ForkMainThreadStallWatchdog", qos: .utility)
+    private static var stallPingSentAt: Double = 0.0
+    private static var stallAwaitingReply = false
+    /// One line per stall, not one per second: a ten-second stall would otherwise write nine
+    /// identical lines, and writing them is itself work piled onto a main thread already in
+    /// trouble. The recovery line carries the total.
+    private static var stallReported = false
+
+    private static func installMainThreadStallWatchdog() {
+        let timer = DispatchSource.makeTimerSource(queue: self.stallQueue)
+        timer.schedule(deadline: .now() + 1.0, repeating: 1.0)
+        timer.setEventHandler {
+            if self.stallAwaitingReply {
+                // The previous ping has not come back yet: the main thread is still busy. Say so
+                // once, then keep waiting rather than piling on pings or repeating the line.
+                let outstanding = CFAbsoluteTimeGetCurrent() - self.stallPingSentAt
+                if outstanding >= self.stallReportThreshold, !self.stallReported {
+                    self.stallReported = true
+                    Logger.shared.log("Stall", "main thread unresponsive, \(String(format: "%.1f", outstanding))s so far")
+                }
+                return
+            }
+            self.stallAwaitingReply = true
+            let sentAt = CFAbsoluteTimeGetCurrent()
+            self.stallPingSentAt = sentAt
+            DispatchQueue.main.async {
+                let waited = CFAbsoluteTimeGetCurrent() - sentAt
+                self.stallQueue.async {
+                    self.stallAwaitingReply = false
+                    if self.stallReported {
+                        self.stallReported = false
+                        Logger.shared.log("Stall", "main thread recovered after \(String(format: "%.1f", waited))s")
+                    }
+                }
+            }
+        }
+        timer.resume()
+        self.stallTimer = timer
+    }
+
+    private static var stallTimer: DispatchSourceTimer?
+
+    /// A steady pulse in the log: resident memory, foreground state, thermal state and free
+    /// disk, once a minute.
+    ///
+    /// When the app dies without a catchable signal — jetsam, watchdog, a kill from the OS —
+    /// the last thing written is the whole of the evidence. A single line at the moment of
+    /// death says almost nothing; the same line repeated for the preceding hour says whether
+    /// memory climbed steadily, jumped, or was flat while something else went wrong. Over a
+    /// multi-day collection that trend is the point of collecting at all.
+    ///
+    /// One line a minute is on the order of 100 KB a day — nothing against the log budget —
+    /// and nothing is computed at all unless logging is switched on.
+    private static let heartbeatInterval: Double = 60.0
+    private static let heartbeatQueue = DispatchQueue(label: "ForkTelemetryHeartbeat", qos: .utility)
+    private static var heartbeatTimer: DispatchSourceTimer?
+    private static var lastHeartbeatMegabytes: Int?
+    private static let installedAt: Double = CFAbsoluteTimeGetCurrent()
+
+    private static func installHeartbeat() {
+        let timer = DispatchSource.makeTimerSource(queue: self.heartbeatQueue)
+        timer.schedule(deadline: .now() + self.heartbeatInterval, repeating: self.heartbeatInterval)
+        timer.setEventHandler {
+            guard Logger.shared.logToFile || Logger.shared.logToConsole else {
+                return
+            }
+
+            // `applicationState` and the memory reader both want the main thread, and hopping
+            // there also means a heartbeat that stops appearing is itself a signal.
+            DispatchQueue.main.async {
+                let megabytes = getMemoryConsumption() / (1024 * 1024)
+
+                var parts: [String] = []
+                parts.append("resident=\(megabytes)MB")
+                if let previous = self.lastHeartbeatMegabytes, previous != megabytes {
+                    let delta = megabytes - previous
+                    parts.append("delta=\(delta > 0 ? "+" : "")\(delta)MB")
+                }
+                self.lastHeartbeatMegabytes = megabytes
+
+                if let mallocMegabytes = self.mallocBytesInUse().map({ $0 / (1024 * 1024) }) {
+                    parts.append("malloc=\(mallocMegabytes)MB")
+                }
+                parts.append("state=\(UIApplication.shared.applicationState == .background ? "background" : "foreground")")
+                parts.append("thermal=\(ForkPerformanceTelemetry.describe(self.thermalState))")
+                if let freeMegabytes = self.availableDiskMegabytes() {
+                    parts.append("disk=\(freeMegabytes)MB")
+                }
+                parts.append("uptime=\(Int(CFAbsoluteTimeGetCurrent() - self.installedAt))s")
+
+                Logger.shared.log("Heartbeat", parts.joined(separator: " "))
+            }
+        }
+        timer.resume()
+        self.heartbeatTimer = timer
+    }
+
+    /// The UUID of every Mach-O image inside the app bundle, once at launch.
+    ///
+    /// MetricKit reports a crash stack as binary UUIDs and offsets and nothing else. Four
+    /// kills on one device produced byte-for-byte identical twenty-six-frame stacks, which is
+    /// worth a great deal — but without knowing which UUID is the app's own framework there is
+    /// no way to tell our frames from the system's, let alone hand the offsets to `atos`. The
+    /// images do not change within a build, so one line at launch makes every crash stack in
+    /// the log readable afterwards.
+    private static func logLoadedImages() {
+        var entries: [String] = []
+        for index in 0 ..< _dyld_image_count() {
+            guard let namePointer = _dyld_get_image_name(index) else {
+                continue
+            }
+            let path = String(cString: namePointer)
+            // Only what shipped in the bundle: the system's images are the same for everyone
+            // and would make the line unreadable.
+            guard path.contains(".app/") else {
+                continue
+            }
+            guard let header = _dyld_get_image_header(index), let uuid = self.uuidOfImage(header) else {
+                continue
+            }
+            entries.append("\((path as NSString).lastPathComponent)=\(uuid)")
+        }
+
+        if !entries.isEmpty {
+            Logger.shared.log("Perf", "bundle images: \(entries.joined(separator: " "))")
+        }
+    }
+
+    private static func uuidOfImage(_ header: UnsafePointer<mach_header>) -> String? {
+        let header64 = UnsafeRawPointer(header).assumingMemoryBound(to: mach_header_64.self)
+        var cursor = UnsafeRawPointer(header64).advanced(by: MemoryLayout<mach_header_64>.size)
+        for _ in 0 ..< Int(header64.pointee.ncmds) {
+            let command = cursor.assumingMemoryBound(to: load_command.self)
+            if command.pointee.cmd == UInt32(LC_UUID) {
+                let value = cursor.assumingMemoryBound(to: uuid_command.self).pointee.uuid
+                return String(format: "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X", value.0, value.1, value.2, value.3, value.4, value.5, value.6, value.7, value.8, value.9, value.10, value.11, value.12, value.13, value.14, value.15)
+            }
+            cursor = cursor.advanced(by: Int(command.pointee.cmdsize))
+        }
+        return nil
+    }
+
+    /// Bytes currently held by the malloc heap, across every zone.
+    ///
+    /// This is the one number that splits a growing footprint in two. The app's own objects —
+    /// caches, arrays, retained graphs — live on the malloc heap, so if this tracks resident
+    /// memory upward the growth is ours and can be found by reading code. Image backing
+    /// stores, IOSurfaces and video decode buffers do not, so if resident climbs while this
+    /// stays flat the growth is in graphics memory and the search goes somewhere else
+    /// entirely. Without it, a log showing a gigabyte says only that there is a gigabyte.
+    private static func mallocBytesInUse() -> Int? {
+        var statistics = malloc_statistics_t()
+        // A nil zone aggregates every zone.
+        malloc_zone_statistics(nil, &statistics)
+        if statistics.size_in_use == 0 {
+            return nil
+        }
+        return Int(statistics.size_in_use)
+    }
+
+    /// Space the system would let the app use for important data, in megabytes. A tester whose
+    /// device is full behaves nothing like one whose device is not, and neither the log nor the
+    /// crash report said which one was writing it.
+    private static func availableDiskMegabytes() -> Int? {
+        guard let values = try? URL(fileURLWithPath: NSHomeDirectory()).resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]), let capacity = values.volumeAvailableCapacityForImportantUsage else {
+            return nil
+        }
+        return Int(capacity / (1024 * 1024))
     }
 
     private static func describe(_ state: ProcessInfo.ThermalState) -> String {

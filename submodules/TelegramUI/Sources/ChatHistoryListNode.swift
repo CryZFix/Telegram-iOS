@@ -4078,6 +4078,15 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
 
         let completion: (Bool, ListViewDisplayedItemRange) -> Void = { [weak self] wasTransformed, visibleRange in
             if let strongSelf = self {
+                if let scrollToItem = transition.scrollToItem {
+                    var visibleMessages: [String] = []
+                    strongSelf.forEachVisibleMessageItemNode { itemNode in
+                        if let item = itemNode.item {
+                            visibleMessages.append("\(Int(itemNode.frame.minY)):\(item.message.index)")
+                        }
+                    }
+                    Logger.shared.log("ChatUnreadPosition", "list-applied peer=\(String(describing: strongSelf.chatLocation.peerId)) targetListIndex=\(scrollToItem.index) targetPosition=\(scrollToItem.position) reason=\(transition.reason) visibleRange=\(visibleRange) visibleMessages=\(visibleMessages.joined(separator: \",\"))")
+                }
                 strongSelf.currentAppliedDeleteAnimationCorrelationIds.removeAll()
                 
                 var newIncomingReactions: [MessageId: (value: MessageReaction.Reaction, isLarge: Bool)] = [:]
@@ -4691,6 +4700,7 @@ public final class ChatHistoryListNodeImpl: ASDisplayNode, ChatHistoryNode, Chat
                     if let itemNode = itemNode as? ChatUnreadItemNode, let index = itemNode.index {
                         if abs(itemNode.frame.maxY - (self.listView.visibleSize.height - self.insets.bottom + 6.0)) < 1.0 {
                             postScrollToItem = ListViewScrollToItem(index: index, position: .bottom(0.0), animated: updateSizeAndInsets.duration != 0.0, curve: updateSizeAndInsets.curve, directionHint: .Up)
+                            Logger.shared.log("ChatUnreadPosition", "layout-realign-unread peer=\(String(describing: self.chatLocation.peerId)) listIndex=\(index) oldBottomInset=\(self.insets.bottom) newBottomInset=\(updateSizeAndInsets.insets.bottom) unreadMaxY=\(itemNode.frame.maxY) visibleHeight=\(self.listView.visibleSize.height)")
                         }
                     }
                 }

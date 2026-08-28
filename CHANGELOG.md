@@ -6,6 +6,37 @@
 
 ## [Unreleased]
 
+## [v12.9.2-3923-pre] — 2026-08-27
+
+Pre-release: autoremove batching, memory/perf diagnostics, network + prefetch fixes.
+
+### Fixed
+- **Autoremove:** drain up to 256 due messages per transaction instead of one commit per expiry; Postbox batch scan `entries(tag:upToTimestamp:limit:)`.
+- **Message saving:** `[MessageSaving]` file logging; proactive preserve fetch capped at 32 MB (waits for organic download above that).
+- **Memory:** respond to memory warnings (eviction path); throttle MediaManager DB writes; camera recovery after interruptions; split resident vs allocated in telemetry.
+- **Network:** stop service-layer rebuild on self-invented master flaps; steady master flag on connections.
+- **WEB proxy:** cooldown resumes on its own timer instead of waiting for settings re-apply.
+- **Prefetch:** skip media already on disk; preload manager logs only when view updates carry entries.
+
+### Added
+- **Instrumentation:** MediaBox fetch pipeline + linear path-touch logging; preload manager census; bundle image UUIDs at launch (symbolication); live chat-screen open/close counter.
+
+## [v12.9.2-3922-pre] — 2026-08-26
+
+Pre-release: extended log retention + streaming export.
+
+### Added
+- **Logging:** file logging raises retention to 400 MB full / 40 MB critical (`setMaxFiles` + immediate prune on disable); minute `[Heartbeat]` when logging is on.
+- **Log export:** `ForkLogExport` hard-links logs → zip on disk, packages off main thread with HUD, single archive for mail/send; `moveResourceData(id:fromTempPath:)` engine forwarder.
+
+## [v12.9.2-3921-pre] — 2026-08-26
+
+Pre-release: crash/hang diagnostics + fork instrumentation for device logs.
+
+### Added
+- **Perf telemetry:** MetricKit crash/hang diagnostics log a greppable one-line summary plus full JSON payload (stacks), not just counts.
+- **Instrumentation:** memory warnings + main-thread stall watchdog; runtime launch breadcrumbs (chat opened/background); `[Chat]` / `[Composer]` / `[Tapbacks]` markers; `WebProxyLog` / `WebSocketTransportLog` sinks wired in `initializeAccountManagement`; WEB proxy bootstrap/outcome/carrier mode; WS endpoint walk + framing rejections; TCP factory choice logged.
+
 ## [v12.9.2-3920-pre] — 2026-08-26
 
 Pre-release: WebSocket recoverable fallback + WEB proxy handshake-only compatibility.

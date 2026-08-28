@@ -465,10 +465,19 @@ final class ChatHistoryPreloadManager {
                                 
                                 let holeIsUpdated = previousHole != updatedHole
                                 
-                                switch index.entity {
-                                case let .peer(peerId, threadId):
-                                    Logger.shared.log("HistoryPreload", "view \(peerId) (threadId: \(String(describing: threadId)) hole \(String(describing: updatedHole)) isUpdated: \(holeIsUpdated)")
+                                // Only when there is something to say. This fired on every view
+                                // update regardless, and 13,676 of the 14,319 in a day's log read
+                                // "hole nil isUpdated: false" — 95% of them, and 5% of the entire
+                                // log, spent recording that nothing had happened. The 643 that
+                                // carry a hole or an update are the ones worth keeping.
+                                if updatedHole != nil || holeIsUpdated {
+                                    switch index.entity {
+                                    case let .peer(peerId, threadId):
+                                        Logger.shared.log("HistoryPreload", "view \(peerId) (threadId: \(String(describing: threadId)) hole \(String(describing: updatedHole)) isUpdated: \(holeIsUpdated)")
+                                    }
                                 }
+
+                                strongSelf.logCensusIfNeeded()
                                 
                                 if previousHole != updatedHole {
                                     strongSelf.update(from: previousHole, to: updatedHole)
@@ -481,6 +490,25 @@ final class ChatHistoryPreloadManager {
         }
     }
     
+    /// How many preload views, hole entries and ordered media items this manager is holding,
+    /// at most once a minute.
+    ///
+    /// Of every subsystem in the log, this one's activity correlates best with the app's
+    /// memory growth — +0.62 against the hourly footprint delta across ninety-eight hours on
+    /// one device, ahead of the fetch tags — and each of these collections holds a live
+    /// subscription per entry. Their sizes should track the chat list, so a count that climbs
+    /// with uptime instead is the thing to find.
+    private var lastCensusTimestamp: Double = 0.0
+
+    private func logCensusIfNeeded() {
+        let timestamp = CFAbsoluteTimeGetCurrent()
+        if timestamp - self.lastCensusTimestamp < 60.0 {
+            return
+        }
+        self.lastCensusTimestamp = timestamp
+        Logger.shared.log("HistoryPreload", "census: views=\(self.views.count) entries=\(self.entries.count) orderedMedia=\(self.orderedMediaValue.count)")
+    }
+
     private func updateMedia() {
         var result: [ChatHistoryPreloadMediaItem] = []
         for (_, view) in self.views {

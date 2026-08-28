@@ -1244,6 +1244,18 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             Logger.shared.logToFile = loggingSettings.logToFile
             Logger.shared.logToConsole = loggingSettings.logToConsole
             Logger.shared.redactSensitiveData = loggingSettings.redactSensitiveData
+
+            // File logging is off unless the build or the user turned it on, so whoever has
+            // it on is collecting logs on purpose. The 40 MB default holds roughly a day of
+            // a busy client — enough to look at a crash that just happened, useless for
+            // watching a pattern build up over a week — so give a collecting build the
+            // extended budget. Turning logging off restores the default and prunes down to
+            // it immediately.
+            if loggingSettings.logToFile {
+                Logger.shared.setMaxFiles(Logger.extendedMaxFiles, shortLog: Logger.extendedMaxShortFiles)
+            } else {
+                Logger.shared.setMaxFiles(Logger.defaultMaxFiles, shortLog: Logger.defaultMaxFiles)
+            }
             
             return .single(sharedApplicationContext)
         })
@@ -1551,6 +1563,9 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         
         let _ = self.isInForegroundPromise.get().start(next: { value in
             Logger.shared.log("App \(self.episodeId)", "isInForeground = \(value)")
+            // A crash just after backgrounding and one in an open chat are different bugs; the
+            // breadcrumb byte could not tell them apart before this.
+            ForkLaunchBreadcrumbs.mark(value ? .chatListVisible : .enteredBackground)
         })
         let _ = self.isActivePromise.get().start(next: { value in
             Logger.shared.log("App \(self.episodeId)", "isActive = \(value)")
@@ -1646,7 +1661,30 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         let _ = self.urlSession(identifier: "\(baseAppBundleId).backroundSession")
         
         var previousReportedMemoryConsumption = 0
+        // Once a minute, on the back of the timer that is already running: a census of the
+        // per-resource contexts the media box holds. Memory growth tracks fetch activity, and
+        // these dictionaries are the fetch pipeline's per-resource state — a monotonic climb in
+        // one of them names the leak outright.
+        var censusCountdown = 0
         let _ = Foundation.Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true, block: { _ in
+            censusCountdown -= 1
+            if censusCountdown <= 0 {
+                censusCountdown = 120
+                if Logger.shared.logToFile || Logger.shared.logToConsole {
+                    let _ = (self.sharedContextPromise.get()
+                    |> take(1)
+                    |> deliverOnMainQueue).start(next: { sharedApplicationContext in
+                        let _ = (sharedApplicationContext.sharedContext.activeAccountContexts
+                        |> take(1)
+                        |> deliverOnMainQueue).start(next: { activeAccounts in
+                            for (_, context, _) in activeAccounts.accounts {
+                                context.account.postbox.mediaBox.logContextCensus()
+                            }
+                        })
+                    })
+                }
+            }
+
             let value = getMemoryConsumption()
             if abs(value - previousReportedMemoryConsumption) > 1 * 1024 * 1024 {
                 previousReportedMemoryConsumption = value
@@ -1986,9 +2024,18 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
             let _ = (sharedApplicationContext.sharedContext.activeAccountContexts
              |> take(1)
              |> deliverOnMainQueue).start(next: { activeAccounts in
+                // How much of the footprint the Postbox table caches account for was never
+                // recorded, so a log showing the app suspended at half a gigabyte gave no way
+                // to tell whether clearing them helped at all. The caches are cleared on the
+                // Postbox queue, so read back after a beat rather than immediately.
+                let before = getMemoryConsumption() / (1024 * 1024)
                 for (_, context, _) in activeAccounts.accounts {
                     context.account.postbox.clearCaches()
                 }
+                Queue.mainQueue().after(1.0, {
+                    let after = getMemoryConsumption() / (1024 * 1024)
+                    Logger.shared.log("Memory", "cleared postbox caches on background: \(before) MB -> \(after) MB")
+                })
             })
         })
         
@@ -2015,6 +2062,34 @@ private func extractAccountManagerState(records: AccountRecordsView<TelegramAcco
         })
 
         WebProxyManager.shared.applicationDidEnterBackground()
+    }
+
+    /// The app had no answer to a memory warning: a search of the tree turns up exactly one
+    /// `UIApplicationDidReceiveMemoryWarningNotification` observer, in a legacy GPUImage
+    /// framebuffer cache. Meanwhile MetricKit reported the app being killed for memory
+    /// pressure eight times in five days on one device, with an average suspended footprint of
+    /// half a gigabyte. Shedding what backgrounding already sheds is the least the app can do
+    /// while it still has a chance to stay alive, and the before/after numbers say how much
+    /// that is actually worth.
+    func applicationDidReceiveMemoryWarning(_ application: UIApplication) {
+        let before = getMemoryConsumption() / (1024 * 1024)
+        Logger.shared.log("Memory", "memory warning at \(before) MB — clearing postbox caches")
+
+        let _ = (self.sharedContextPromise.get()
+        |> take(1)
+        |> deliverOnMainQueue).start(next: { sharedApplicationContext in
+            let _ = (sharedApplicationContext.sharedContext.activeAccountContexts
+            |> take(1)
+            |> deliverOnMainQueue).start(next: { activeAccounts in
+                for (_, context, _) in activeAccounts.accounts {
+                    context.account.postbox.clearCaches()
+                }
+                Queue.mainQueue().after(1.0, {
+                    let after = getMemoryConsumption() / (1024 * 1024)
+                    Logger.shared.log("Memory", "after memory warning cleanup: \(before) MB -> \(after) MB")
+                })
+            })
+        })
     }
 
     func applicationWillEnterForeground(_ application: UIApplication) {
@@ -3401,7 +3476,10 @@ private func downloadHTTPData(url: URL) -> Signal<Data, DownloadFileError> {
     }
 }
 
-private func getMemoryConsumption() -> Int {
+/// Resident footprint in bytes, or 0 when the kernel will not say. Internal rather than private so
+/// the telemetry in ForkPerformanceTelemetry reports the same number this file's memory timer does,
+/// instead of a second mach call that could drift from it.
+func getMemoryConsumption() -> Int {
     guard let memory_offset = MemoryLayout.offset(of: \task_vm_info_data_t.min_address) else {
         return 0
     }
